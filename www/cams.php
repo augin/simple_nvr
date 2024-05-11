@@ -2,7 +2,7 @@
 // Убедитесь, что расширение php-yaml установлено и включено
 
 // Загрузка содержимого файла конфигурации nvr.yaml
-$nvrConfig = yaml_parse_file('nvr.yaml');
+$nvrConfig = yaml_parse_file('../nvr.yaml');
 
 // Проверка наличия пути к файлу в конфигурации
 if (isset($nvrConfig['go2rtc_config_path'])) {
