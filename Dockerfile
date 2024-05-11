@@ -27,4 +27,4 @@ EXPOSE 8180
 VOLUME /config
 WORKDIR /config
 
-CMD php-fpm83; nginx; python3 nvr.py --config_file /config/nvr.yaml
+CMD php-fpm83; nginx; python3 /opt/simple_nvr/nvr.py --config_file /config/nvr.yaml
