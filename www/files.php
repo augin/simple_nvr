@@ -1,7 +1,7 @@
 <?php
 
 if (is_dir("video")) {
-$nvrConfig = yaml_parse_file('../nvr.yaml');
+$nvrConfig = yaml_parse_file('/config/nvr.yaml');
 if (isset($nvrConfig['base_dir'])) {
     $base_dir = $nvrConfig['base_dir'];
     shell_exec("ln -s " . escapeshellarg($base_dir) . " video");
