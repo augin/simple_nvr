@@ -17,6 +17,7 @@ RUN apk add --no-cache python3 python3-yaml
 COPY nginx.conf /etc/nginx/nginx.conf
 
 # Копирование скрипта запуска
+RUN mkdir -p /opt/simple_nvr/
 COPY nvr.py /opt/simple_nvr/nvr.py
 COPY nvr.yaml /config/nvr.yaml
 COPY www/ /opt/simple_nvr/
