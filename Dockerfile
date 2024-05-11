@@ -8,10 +8,10 @@ RUN apk add --no-cache nginx
 RUN mkdir -p /run/nginx
 
 # Установка PHP и основных расширений
-RUN apk add --no-cache php8 php8-fpm php8-mbstring php8-json php8-yaml
+RUN apk add --no-cache php83 php83-fpm php83-mbstring php83-json php83-pecl-yaml
 
 # Установка Python
-RUN apk add --no-cache python3 python3-yaml
+RUN apk add --no-cache python3 py3-yaml
 
 # Копирование конфигурации Nginx в контейнер
 COPY nginx.conf /etc/nginx/nginx.conf
@@ -27,6 +27,5 @@ EXPOSE 80
 VOLUME /config
 WORKDIR /config
 
-CMD ["php-fpm7"]
-CMD ["nginx -g "daemon off;""]
+CMD php-fpm83; nginx -g "daemon off;"
 #CMD ["python3", "nvr.py", "--config_file", "/config/nvr.yaml"]
