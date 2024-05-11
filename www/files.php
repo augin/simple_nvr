@@ -1,4 +1,13 @@
 <?php
+
+if (is_dir("video")) {
+$nvrConfig = yaml_parse_file('../nvr.yaml');
+if (isset($nvrConfig['base_dir'])) {
+    $base_dir = $nvrConfig['base_dir'];
+    shell_exec("ln -s " . escapeshellarg($base_dir) . " video");
+   }
+}
+
 // Function to recursively get all files in a directory
 function getFiles($dir, &$visitedDirs = []) {
     $files = glob(rtrim($dir, '/') . '/*');
