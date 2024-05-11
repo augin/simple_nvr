@@ -22,7 +22,7 @@ COPY nvr.py /opt/simple_nvr/nvr.py
 COPY nvr.yaml /config/nvr.yaml
 COPY www /opt/simple_nvr/www
 # Открытие портов для Nginx
-EXPOSE 80
+EXPOSE 8180
 
 VOLUME /config
 WORKDIR /config
