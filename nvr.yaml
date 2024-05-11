@@ -2,4 +2,4 @@
 base_dir: '/usr/share/hassio/mounts/disk1/video'
 stream_server: 'rtsp://127.0.0.1:8554'
 target_size_gb: 90
-go2rtc_config_path: '/usr/share/hassio/homeassistant/go2rtc.yaml'
+go2rtc_config_path: '/config/go2rtc.yaml'
