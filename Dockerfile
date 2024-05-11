@@ -29,4 +29,4 @@ WORKDIR /config
 
 CMD ["php-fpm7"]
 CMD ["nginx -g "daemon off;""]
-CMD ["python3", "nvr.py", "--config_file", "/config/nvr.yaml"]
+#CMD ["python3", "nvr.py", "--config_file", "/config/nvr.yaml"]
