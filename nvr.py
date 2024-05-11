@@ -101,7 +101,6 @@ def record_streams(duration, base_dir, stream_server):
 
 ## Запуск записи при старте.
 now = datetime.now()
-#if now.minute % 10 != 0:
 next_interval = (now.minute // 10 + 1) * 10
 remaining_time = (next_interval - now.minute) * 60 - now.second
 record_streams(remaining_time, base_dir, stream_server)
