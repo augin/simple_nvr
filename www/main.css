@@ -1,0 +1,80 @@
+    #video-player {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+
+    #camera-list {
+      flex: 1;
+      padding: 10px;
+    }
+
+    #video-container {
+      flex: 6;
+      padding: 10px;
+    }
+
+    /* Стили для кнопок */
+    button {
+      background-color: #a9a9a9; /* #4caf50; /* Зеленый цвет кнопок */
+      color: white;
+      border: none;
+      padding: 3px 10px;
+      text-align: center;
+      text-decoration: none;
+      display: inline-block;
+      font-size: 16px;
+      margin: 4px 2px;
+      cursor: pointer;
+      border-radius: 8px;
+    }
+
+    button:hover {
+      background-color: #45a049; /* Темнозеленый цвет при наведении */
+    }
+
+    /* Стили для видеоплеера */
+    video {
+      width: 100%;
+    }
+
+/* Style for folder tree */
+#folderTree {
+    list-style: none;
+    padding-left: 0;
+}
+
+.folder {
+    cursor: pointer;
+}
+
+.collapsed {
+    display: none;
+}
+
+
+#folderTree {
+    max-height: 90vh; /* Adjust the height as needed */
+    overflow-y: auto;
+}
+
+
+#camera-buttons button.active {
+  background-color: #007bff;
+  color: #ffffff;
+}
+
+#speed-buttons button.active {
+  background-color: #007bff;
+  color: #ffffff;
+}
+
+/* Стили для активного элемента списка файлов */
+#folderTree li ul li.active {
+  background-color: #007bff; /* Цвет фона активного файла */
+  cursor: pointer;
+}
+#folderTree li ul li {
+  cursor: pointer;
+}
+

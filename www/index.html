@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Видео Плеер</title>
+<link rel="stylesheet" href="main.css">
+ <style>
+    /* Стили для разметки плеера */
+    body {
+      background-color: #202124; /* Цвет фона для темной темы */
+      color: #ffffff; /* Цвет текста для темной темы */
+    }
+ </style>
+
+</head>
+<body>
+  <div id="video-player">
+    <div id="camera-list">
+      <h2>Камеры</h2>
+      <ul id="camera-buttons">
+        <!-- Кнопки для камер будут добавлены здесь -->
+      </ul>
+    </div>
+
+    <div id="video-container">
+      <h2 id="cam-name">Выберете камеру</h2>
+      <video id="video" controls muted>
+        <!-- Видеофайл будет отображаться здесь -->
+      </video>
+      <div id="speed-buttons">
+        <button data-speed="1" onclick="changePlaybackSpeed(1)">1x</button>
+        <button data-speed="2" onclick="changePlaybackSpeed(2)">2x</button>
+        <button data-speed="4" onclick="changePlaybackSpeed(4)">4x</button>
+        <button data-speed="8" onclick="changePlaybackSpeed(8)">8x</button>
+        <button data-speed="10" onclick="changePlaybackSpeed(10)">10x</button>
+      </div>
+    </div>
+
+
+    <div id="time-folder-list">
+     <h2>дата и время</h2>
+
+      <div id="folderTree" class="scrollable"></div>
+
+
+    </div>
+  </div>
+
+<script src="main.js"></script>
+
+</body>
+</html>
