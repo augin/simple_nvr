@@ -27,5 +27,4 @@ EXPOSE 80
 VOLUME /config
 WORKDIR /config
 
-CMD php-fpm83; nginx -g "daemon off;"
-#CMD ["python3", "nvr.py", "--config_file", "/config/nvr.yaml"]
+CMD php-fpm83; nginx; python3 nvr.py --config_file /config/nvr.yaml
