@@ -1,11 +1,17 @@
 <?php
 
-if (is_dir("video")) {
 $nvrConfig = yaml_parse_file('/config/nvr.yaml');
 if (isset($nvrConfig['base_dir'])) {
+if (is_dir("video")) {
+    //usage
+    $directory = 'video/'.$_GET['camera'];
+    $jsonData = getAllFilesJSON($directory);
+    echo $jsonData;
+}
+else {
     $base_dir = $nvrConfig['base_dir'];
     shell_exec("ln -s " . escapeshellarg($base_dir) . " video");
-   }
+}
 }
 
 // Function to recursively get all files in a directory
@@ -34,17 +40,10 @@ function getAllFilesJSON($dir) {
     foreach ($files as $file) {
         $folder = dirname($file);
         $filename = basename($file);
-//        if (!array_key_exists($folder, $result)) {
-//            $result[$folder] = [];
-//        }
         $result[$folder][] = $filename;
     }
 
     return json_encode($result);
 }
 
-//usage
-$directory = 'video/'.$_GET['camera'];
-$jsonData = getAllFilesJSON($directory);
-echo $jsonData;
 ?>
