@@ -1,6 +1,9 @@
 # Используем базовый образ Alpine Linux
 FROM alpine:latest
 
+RUN apk add --no-cache tzdata
+ENV TZ=Europe/Moscow
+
 # Установка Nginx
 RUN apk add --no-cache nginx
 
