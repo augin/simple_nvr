@@ -4,8 +4,8 @@ After=network.target
 
 [Service]
 User=root
-WorkingDirectory=/opt/nvr
-ExecStart=/usr/bin/python3 /opt/nvr/nvr.py
+WorkingDirectory=/opt/simple_nvr
+ExecStart=/usr/bin/python3 /opt/simple_nvr/nvr.py
 Restart=always
 
 [Install]
