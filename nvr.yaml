@@ -1,0 +1,5 @@
+# Основные настройки
+base_dir: '/media/disk1/vt'
+stream_server: 'rtsp://10.10.15.103:8554'
+target_size_gb: 90
+go2rtc_config_path: '/opt/go2rtc/go2rtc.yaml'
