@@ -1,0 +1,12 @@
+[Unit]
+Description=simple nvr
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/opt/nvr
+ExecStart=/usr/bin/python3 /opt/nvr/nvr.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
