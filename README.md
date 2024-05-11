@@ -1,2 +1,2 @@
 # простой видеорегистратор
-apt install php-yaml python-yaml
+apt install php-yaml python-yaml python-schedule
