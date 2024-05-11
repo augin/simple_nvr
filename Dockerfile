@@ -20,7 +20,7 @@ COPY nginx.conf /etc/nginx/nginx.conf
 RUN mkdir -p /opt/simple_nvr/
 COPY nvr.py /opt/simple_nvr/nvr.py
 COPY nvr.yaml /config/nvr.yaml
-COPY www/ /opt/simple_nvr/
+COPY www /opt/simple_nvr/www
 # Открытие портов для Nginx
 EXPOSE 80
 
