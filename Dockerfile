@@ -1,30 +1,29 @@
-# syntax=docker/dockerfile:labs
+# Используем базовый образ Alpine Linux
+FROM alpine:latest
 
-# 0. Prepare images
-ARG PYTHON_VERSION="3.11"
+# Установка Nginx
+RUN apk add --no-cache nginx
 
-FROM python:${PYTHON_VERSION}-alpine AS base
+# Создание директории для PID файла Nginx
+RUN mkdir -p /run/nginx
 
-# 2. Collect all files
-FROM scratch AS rootfs
+# Установка PHP и основных расширений
+RUN apk add --no-cache php8 php8-fpm php8-mbstring php8-json php8-yaml
 
-COPY --from=/ /opt/simple_nvr/
+# Установка Python
+RUN apk add --no-cache python3 python3-yaml
 
-# 3. Final image
-FROM base
+# Копирование конфигурации Nginx в контейнер
+COPY nginx.conf /etc/nginx/nginx.conf
 
-# Install ffmpeg, tini (for signal handling),
-# and other common tools for the echo source.
-# font-droid for FFmpeg drawtext filter (+2MB)
-RUN apk add --no-cache tini ffmpeg font-droid
+# Копирование скрипта запуска
+COPY nvr.py /opt/simple_nvr/nvr.py
+COPY nvr.yaml /config/nvr.yaml
+COPY www/ /opt/simple_nvr/
+# Открытие портов для Nginx
+EXPOSE 80
 
-# Hardware Acceleration for Intel CPU (+50MB)
-ARG TARGETARCH
-
-COPY --from=rootfs / /
-
-ENTRYPOINT ["/sbin/tini", "--"]
 VOLUME /config
 WORKDIR /config
 
-CMD ["python3", "dvr.py", "--config_file", "/config/dvr.yaml"]
+CMD ["python3", "nvr.py", "--config_file", "/config/nvr.yaml"]
