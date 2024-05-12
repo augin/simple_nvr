@@ -42,28 +42,32 @@ def clean_camera_folders(base_dir, target_size_gb):
     # Перебор папок камер
     for camera_dir in base_dir.iterdir():
         if camera_dir.is_dir():
-            # Получить текущий размер папки камеры в ГБ без десятичной части
+            # Получить текущий размер папки камеры в ГБ
             size_gb = sum(f.stat().st_size for f in camera_dir.glob('**/*') if f.is_file()) / (1024 ** 3)
 
             # Рассчитать, сколько нужно удалить, чтобы достичь целевого размера
             space_to_free_gb = size_gb - target_size_gb
 
             # Проверить, превышает ли текущий размер целевой размер
-            if size_gb > target_size_gb:
+            if space_to_free_gb > 0:
                 print(f"Cleaning {camera_dir}")
-                # Удалить самые старые файлы, пока размер папки не уменьшится до целевого размера
-                while space_to_free_gb > 0:
-                    # Найти самый старый файл в папке
-                    oldest_file = min(camera_dir.glob('**/*'), key=os.path.getmtime)
-                    # Удалить самый старый файл
-                    oldest_file_size = oldest_file.stat().st_size / (1024 ** 3)
-                    try:
-                        oldest_file.unlink()
-                        print(f"Deleted {oldest_file}")
-                        # Обновить текущий размер
-                        space_to_free_gb -= oldest_file_size
-                    except Exception as e:
-                        print(f"Error deleting file {oldest_file}: {e}")
+                # Получить список файлов, отсортированных по времени изменения (от самых старых до самых новых)
+                files = list(camera_dir.glob('**/*'))
+                files.sort(key=os.path.getmtime)
+
+                # Удалить файлы, пока размер папки не уменьшится до целевого размера
+                for file in files:
+                    if space_to_free_gb <= 0:
+                        break
+                    if file.is_file():
+                        file_size_gb = file.stat().st_size / (1024 ** 3)
+                        try:
+                            file.unlink()
+                            print(f"Deleted {file}")
+                            space_to_free_gb -= file_size_gb
+                        except Exception as e:
+                            print(f"Error deleting file {file}: {e}")
+
 
 # Функция для записи потоков
 def record_streams(duration, base_dir, stream_server):
