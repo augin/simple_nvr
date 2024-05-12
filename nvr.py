@@ -103,11 +103,6 @@ def record_streams(duration, base_dir, stream_server):
     # Возвращаем список запущенных процессов, если нужно контролировать их в будущем
     return processes
 
-## Запуск записи при старте.
-now = datetime.now()
-next_interval = (now.minute // 10 + 1) * 10
-remaining_time = (next_interval - now.minute) * 60 - now.second
-record_streams(remaining_time, base_dir, stream_server)
 
 duration = 607
 # Планируем задачу на каждые 10 минут
@@ -117,6 +112,12 @@ schedule.every().hour.at(":20").do(record_streams, duration, base_dir, stream_se
 schedule.every().hour.at(":30").do(record_streams, duration, base_dir, stream_server)
 schedule.every().hour.at(":40").do(record_streams, duration, base_dir, stream_server)
 schedule.every().hour.at(":50").do(record_streams, duration, base_dir, stream_server)
+
+## Запуск записи при старте.
+now = datetime.now()
+next_interval = (now.minute // 10 + 1) * 10
+remaining_time = (next_interval - now.minute) * 60 - now.second
+record_streams(remaining_time, base_dir, stream_server)
 
 # Основной цикл
 while True:
