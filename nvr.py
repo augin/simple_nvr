@@ -98,10 +98,10 @@ def record_streams(duration, base_dir, stream_server):
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         processes.append(process)
 
+    # Очистка папок до размера target_size_gb Гб
+    clean_camera_folders(base_dir, target_size_gb)
     # Возвращаем список запущенных процессов, если нужно контролировать их в будущем
     return processes
-    # Очистка папок до размера 90 Гб
-    clean_camera_folders(base_dir, target_size_gb)
 
 ## Запуск записи при старте.
 now = datetime.now()
