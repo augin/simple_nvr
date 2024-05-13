@@ -1,42 +1,24 @@
-    #video-player {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-    }
+/* Стили для видеоплеера */
+video {
+  width: 100%;
+}
 
-    #camera-list {
-      flex: 1;
-      padding: 10px;
-    }
+#video-player {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
 
-    #video-container {
-      flex: 6;
-      padding: 10px;
-    }
+#camera-list {
+//  flex: 1;
+  padding: 10px;
+}
 
-    /* Стили для кнопок */
-    button {
-      background-color: #a9a9a9; /* #4caf50; /* Зеленый цвет кнопок */
-      color: white;
-      border: none;
-      padding: 3px 10px;
-      text-align: center;
-      text-decoration: none;
-      display: inline-block;
-      font-size: 16px;
-      margin: 4px 2px;
-      cursor: pointer;
-      border-radius: 8px;
-    }
+#video-container {
+  flex: 1;
+  padding: 10px;
+}
 
-    button:hover {
-      background-color: #45a049; /* Темнозеленый цвет при наведении */
-    }
-
-    /* Стили для видеоплеера */
-    video {
-      width: 100%;
-    }
 
 /* Style for folder tree */
 #folderTree {
@@ -58,17 +40,6 @@
     overflow-y: auto;
 }
 
-
-#camera-buttons button.active {
-  background-color: #007bff;
-  color: #ffffff;
-}
-
-#speed-buttons button.active {
-  background-color: #007bff;
-  color: #ffffff;
-}
-
 /* Стили для активного элемента списка файлов */
 #folderTree li ul li.active {
   background-color: #007bff; /* Цвет фона активного файла */
@@ -76,5 +47,29 @@
 }
 #folderTree li ul li {
   cursor: pointer;
+  list-style-type: none;
 }
 
+#folderTree li ul li:hover {
+  background-color: #007bff;  /* голубой цвет при наведении */
+}
+
+
+/* Стили для кнопок */
+button {
+  background-color: #202124; // #a9a9a9; /* #4caf50; /* цвет кнопок - цвет фона */
+  color: white;
+  border: none;
+  padding: 3px 10px;
+  text-align: center;
+  text-decoration: none;
+  display: inline-block;
+  font-size: 16px;
+  margin: 1px 2px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+button:hover {
+  background-color: #007bff;  /* голубой цвет при наведении */
+}
