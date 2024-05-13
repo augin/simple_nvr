@@ -14,7 +14,7 @@ let currentPlaybackSpeed = 1;
 function changePlaybackSpeed(speed) {
   const video = document.getElementById('video');
   video.playbackRate = speed;
-  
+
   // Сохраняем текущую скорость в глобальную переменную
   currentPlaybackSpeed = speed;
 
@@ -97,7 +97,8 @@ function generateFileTree(data, parent) {
     Object.keys(data).forEach(key => {
         const folderLi = document.createElement('li');
         const folderSpan = document.createElement('span');
-        folderSpan.textContent = key;
+        const campath = "video/" + document.getElementById("cam-name").innerHTML + "/";
+        folderSpan.textContent = key.replace(campath, '');
         folderSpan.classList.add('folder');
         folderLi.appendChild(folderSpan);
         const ul = document.createElement('ul');
@@ -106,7 +107,7 @@ function generateFileTree(data, parent) {
 
         data[key].forEach(file => {
             const fileLi = document.createElement('li');
-            const fileTextNode = document.createTextNode(file);
+            const fileTextNode = document.createTextNode(file.replace(".mp4", ''));
             fileLi.appendChild(fileTextNode);
             ul.appendChild(fileLi);
         });
@@ -131,8 +132,6 @@ function fetch_files(camera) {
         // Вызов функции добавления обработчиков событий после генерации дерева файлов
         generateFileTree(data, folderTreeContainer);
         addFileClickHandlers();
-
-
 
         playSecondFileDefault();
 
@@ -165,7 +164,8 @@ function addFileClickHandlers() {
       // Получите путь к видео из дерева файлов
       const folderSpan = fileElement.parentElement.parentElement.firstChild;
       const folderName = folderSpan.textContent;
-      const videoPath = `${folderName}/${fileName}`;
+      const campath = "video/" + document.getElementById("cam-name").innerHTML + "/";
+      const videoPath = `${campath}${folderName}/${fileName}.mp4`;
 
       // Воспроизведение нового видео с сохраненной скоростью
       playNewVideo(videoPath);
@@ -201,4 +201,3 @@ function playSecondFileDefault() {
     secondFileElement.click();
   }
 }
-
