@@ -73,3 +73,23 @@ button {
 button:hover {
   background-color: #007bff;  /* голубой цвет при наведении */
 }
+
+
+#camera-buttons button.active {
+  background-color: #007bff;
+  color: #ffffff;
+}
+
+#speed-buttons button.active {
+  background-color: #007bff;
+  color: #ffffff;
+}
+
+#camera-buttons {
+  list-style-type: none;
+  padding-left: 0;
+}
+
+#camera-buttons button{
+  width: 100%;
+}
