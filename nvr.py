@@ -27,9 +27,10 @@ stream_server = config['stream_server']
 target_size_gb = config['target_size_gb']
 go2rtc_config_path = config['go2rtc_config_path']
 
-def clean_camera_folders(base_dir, target_size_gb):
-    """Очищает папки камер, удаляя самые старые файлы, а затем пустые директории."""
+def clean_camera_folders(base_dir, target_size_gb, min_age_seconds=3600):
+    """Удаляет старые файлы и пустые директории, но не трогает недавно созданные каталоги."""
     base_dir = Path(base_dir)
+    now = time.time()
 
     # 1. Удаляем старые файлы, если превышен лимит размера
     for camera_dir in base_dir.iterdir():
@@ -53,11 +54,17 @@ def clean_camera_folders(base_dir, target_size_gb):
                         except Exception as e:
                             print(f"Error deleting file {file}: {e}")
 
-    # 2. Удаляем пустые папки (рекурсивно)
+    # 2. Удаляем пустые папки (рекурсивно),
+    # но не трогаем каталоги, созданные меньше min_age_seconds назад
     for root, dirs, files in os.walk(base_dir, topdown=False):
         for dir_name in dirs:
             dir_path = Path(root) / dir_name
             try:
+                # Проверяем возраст папки
+                folder_age = now - dir_path.stat().st_ctime
+                if folder_age < min_age_seconds:
+                    continue  # пропускаем недавно созданные папки
+
                 if not any(dir_path.iterdir()):  # Если папка пуста
                     dir_path.rmdir()
                     print(f"Deleted empty directory: {dir_path}")
