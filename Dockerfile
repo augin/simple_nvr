@@ -14,7 +14,7 @@ RUN mkdir -p /run/nginx
 RUN apk add --no-cache php83 php83-fpm php83-mbstring php83-json php83-pecl-yaml
 
 # Установка Python
-RUN apk add --no-cache python3 py3-yaml py3-schedule
+RUN apk add --no-cache python3 py3-yaml py3-schedule py3-flask py3-watchdog
 
 RUN apk add --no-cache ffmpeg
 # Копирование конфигурации Nginx в контейнер
