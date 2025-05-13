@@ -27,7 +27,7 @@ COPY nvr.yaml /config/nvr.yaml
 COPY www /opt/simple_nvr/www
 RUN chown nobody /opt/simple_nvr/www
 # Открытие портов для Nginx
-EXPOSE 8180
+EXPOSE 8180 5000
 
 VOLUME /config
 WORKDIR /config
