@@ -8,7 +8,7 @@ import schedule
 from pathlib import Path
 import signal
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 import threading
 from urllib.parse import parse_qs
 
@@ -25,6 +25,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[logging.StreamHandler()]
 )
+logger = logging.getLogger(__name__)
 
 # ===================== Вспомогательные функции для парсинга fragment в URI =====================
 def _parse_fragment(fragment: str) -> Dict[str, List[str]]:
@@ -54,15 +55,6 @@ def _parse_number(value: Optional[str]) -> Optional[float]:
 def parse_rec_from_uri(raw: str) -> float:
     """
     Разбирает URI потока и возвращает числовой параметр rec / rec_size / record_size в гигабайтах (GB).
-    Логика:
-      - смотрим fragment после '#'
-      - приоритет: rec_size / record_size > rec
-      - если значение числовое (целое/дробное) — возвращаем его (>=0)
-      - иначе возвращаем 0.0
-    Примеры:
-      rtsp://.../stream#rec=2       -> 2.0 (GB)
-      rtsp://.../stream#rec_size=1.5 -> 1.5 (GB)
-      rtsp://.../stream#rec=true    -> 0.0 (нечисловое значение игнорируется)
     """
     if "#" in raw:
         _, frag = raw.split("#", 1)
@@ -85,7 +77,7 @@ def parse_rec_from_uri(raw: str) -> float:
     else:
         # если были параметры, но нечисловые — логируем предупреждение
         if (rec_size_val is not None and rec_size_val != "") or (rec_val is not None and rec_val != ""):
-            logging.warning(
+            logger.warning(
                 "Параметр записи задан в URI, но не содержит числового значения (ожидается GB): rec=%r rec_size=%r",
                 rec_val,
                 rec_size_val,
@@ -96,16 +88,13 @@ def parse_rec_from_uri(raw: str) -> float:
 def read_dvr_config(config_file: str) -> Dict[str, Any]:
     """
     Читает основной YAML-конфигурационный файл.
-
-    :param config_file: Путь к конфигурационному файлу.
-    :return: Словарь настроек.
     """
     try:
         with open(config_file, 'r') as file:
             config_data = yaml.safe_load(file)
         return config_data
     except Exception as e:
-        logging.error(f"Ошибка чтения конфигурационного файла {config_file}: {e}")
+        logger.error(f"Ошибка чтения конфигурационного файла {config_file}: {e}")
         raise
 
 # ===================== Основной класс записи =====================
@@ -113,13 +102,10 @@ class VideoRecorder:
     """
     Класс для записи видеопотоков, управления процессами, очистки хранилища и автоматического перезапуска.
 
-    Изменения:
-    - читаем go2rtc-конфигурацию и парсим для каждой камеры параметр rec (в GB).
-      Этот числовой объём выступает и как "флаг записи": если > 0 — запись включена для камеры.
-    - при очистке директорий учитывается quota (rec в GB) для конкретной камеры, если задана,
-      иначе используется глобальная target_size_gb.
-    - при старте записи (record_streams) запускаем запись только для тех камер, у которых quota > 0.
-    - очистка запускается в фоне (в отдельном потоке), чтобы не блокировать старт записи.
+    Поведение изменено так, чтобы расписание запусков (каждую 10-ю минуту) всегда
+    запускало новые записи для всех камер с quota > 0: если для камеры уже запущен процесс,
+    он будет корректно завершён (TERM -> KILL при необходимости) и заменён новым процессом.
+    Это обеспечивает, что запись начинается ровно в указанную минуту.
     """
     def __init__(self, dvr_config_file: str) -> None:
         self.config_file: str = dvr_config_file
@@ -132,10 +118,8 @@ class VideoRecorder:
         self.go2rtc_config: Dict[str, Any] = self.load_go2rtc_config()
         # Словарь с quota (GB) для камер по имени: {camera_name: quota_gb}
         self.camera_quotas_gb: Dict[str, float] = self._build_camera_quotas(self.go2rtc_config)
-        # Словарь активных процессов; теперь для каждого потока сохраняем словарь с тремя полями:
-        # "process" – объект subprocess.Popen,
-        # "start_time" – время запуска,
-        # "duration" – планируемая длительность записи (в секундах).
+        # Словарь активных процессов; для каждого потока хранится одна запись
+        # {"process": Popen, "start_time": datetime, "duration": int}
         self.active_processes: Dict[str, Dict[str, Any]] = {}
         self.process_lock = threading.Lock()
 
@@ -144,36 +128,27 @@ class VideoRecorder:
         self._cleanup_in_progress = False
         self._cleanup_thread: Optional[threading.Thread] = None
 
+        logger.debug("Initialized VideoRecorder; streams keys: %s", list(self.go2rtc_config.get('streams', {}).keys()))
+
     def load_go2rtc_config(self) -> Dict[str, Any]:
         """
         Загружает и кэширует конфигурацию go2rtc.
-
-        :return: Словарь настроек потоков.
         """
         try:
             with self.go2rtc_config_path.open('r') as file:
                 config_data = yaml.safe_load(file) or {}
             return config_data
         except Exception as e:
-            logging.error(f"Ошибка чтения go2rtc-конфигурации {self.go2rtc_config_path}: {e}")
+            logger.error(f"Ошибка чтения go2rtc-конфигурации {self.go2rtc_config_path}: {e}")
             raise
 
     def _build_camera_quotas(self, go2rtc_cfg: Dict[str, Any]) -> Dict[str, float]:
         """
         Постройка словаря квот (GB) для камер на основе go2rtc-конфигурации.
-        Поддерживается следующие формы в streams:
-          camera: "rtsp://...#rec=2"
-          camera:
-            - "rtsp://...#rec=2"
-            - "rtsp://...#rec=0"
-        Правило:
-          - если у камеры несколько URI — берём первое числовое значение rec/rec_size/record_size (GB),
-            которое встречается; если ни у одного нет — 0.0
         """
         quotas: Dict[str, float] = {}
         streams = go2rtc_cfg.get('streams', {}) or {}
         for cam_name, uris in streams.items():
-            # uris может быть строкой или списком
             if isinstance(uris, str):
                 uris_list = [uris]
             else:
@@ -187,8 +162,9 @@ class VideoRecorder:
                         quota = q
                         break
                 except Exception:
-                    logging.exception("Ошибка при парсинге URI %r для камеры %s", raw_uri, cam_name)
+                    logger.exception("Ошибка при парсинге URI %r для камеры %s", raw_uri, cam_name)
             quotas[cam_name] = quota
+        logger.debug("camera_quotas_gb: %s", quotas)
         return quotas
 
     def reload_config(self) -> None:
@@ -205,102 +181,55 @@ class VideoRecorder:
             self.go2rtc_config = self.load_go2rtc_config()
             # Перестроим квоты
             self.camera_quotas_gb = self._build_camera_quotas(self.go2rtc_config)
-            logging.info("Основная конфигурация успешно перезагружена.")
+            logger.info("Основная конфигурация успешно перезагружена.")
         except Exception as e:
-            logging.error(f"Ошибка перезагрузки конфигурации: {e}")
+            logger.error(f"Ошибка перезагрузки конфигурации: {e}")
 
-    def clean_camera_folders(self, min_age_seconds: int = 3600) -> None:
+    def _parse_raw_uri_candidate(self, raw: str) -> Optional[str]:
         """
-        Удаляет старые файлы и пустые директории. Каталоги, созданные менее min_age_seconds назад, не трогаются.
-
-        Использует per-camera quota (GB), если она задана в go2rtc конфиге; иначе fallback на self.target_size_gb.
-
-        :param min_age_seconds: Минимальный возраст (сек) пустой директории для её удаления.
+        Убирает фрагмент после '#' и возвращает строку или None.
         """
-        now = time.time()
+        if not isinstance(raw, str):
+            return None
+        return raw.split('#', 1)[0].strip()
 
-        # 1. Очистка файлов: если размер каталога превышает лимит, удаляются самые старые файлы.
-        for camera_dir in self.base_dir.iterdir():
-            if camera_dir.is_dir():
-                cam_name = camera_dir.name
-                # получаем quota для этой камеры; если не задана — используем глобальную target_size_gb
-                cam_quota_gb = float(self.camera_quotas_gb.get(cam_name, self.target_size_gb))
-                try:
-                    size_bytes = sum(f.stat().st_size for f in camera_dir.glob('**/*') if f.is_file())
-                    size_gb = size_bytes / (1024 ** 3)
-                except Exception as e:
-                    logging.error(f"Ошибка при расчёте размера {camera_dir}: {e}")
-                    continue
-
-                space_to_free_gb = size_gb - cam_quota_gb
-                if space_to_free_gb > 0:
-                    logging.info(f"Очистка {camera_dir}: нужно освободить {space_to_free_gb:.3f} ГБ (quota {cam_quota_gb:.3f} ГБ).")
-                    try:
-                        files = sorted((f for f in camera_dir.glob('**/*') if f.is_file()), key=lambda f: f.stat().st_mtime)
-                    except Exception as e:
-                        logging.error(f"Ошибка сортировки файлов в {camera_dir}: {e}")
-                        continue
-
-                    for file in files:
-                        if space_to_free_gb <= 0:
-                            break
-                        try:
-                            file_size_gb = file.stat().st_size / (1024 ** 3)
-                            file.unlink()
-                            logging.info(f"Удалён файл {file} размером {file_size_gb:.3f} ГБ.")
-                            space_to_free_gb -= file_size_gb
-                        except Exception as e:
-                            logging.error(f"Ошибка при удалении файла {file}: {e}")
-
-        # 2. Удаление пустых директорий (если возраст больше min_age_seconds)
-        for root, dirs, _ in os.walk(self.base_dir, topdown=False):
-            for dir_name in dirs:
-                dir_path = Path(root) / dir_name
-                try:
-                    folder_age = now - dir_path.stat().st_ctime
-                    if folder_age < min_age_seconds:
-                        continue
-                    if not any(dir_path.iterdir()):
-                        dir_path.rmdir()
-                        logging.info(f"Удалена пустая директория: {dir_path}")
-                except Exception as e:
-                    logging.error(f"Ошибка при удалении директории {dir_path}: {e}")
-
-    def _start_background_cleanup(self, min_age_seconds: int = 3600) -> None:
+    def _choose_input_url(self, stream_name: str) -> Tuple[str, Optional[str]]:
         """
-        Запускает clean_camera_folders в отдельном потоке, если в данный момент очистка не выполняется.
-        Это позволяет не блокировать record_streams.
+        Выбирает URL для ffmpeg для заданного stream_name на основе go2rtc config.
+        Возвращает (input_url, used_raw_uri) where used_raw_uri is raw value used (if any).
+        Правила:
+          - если в go2rtc streams для имени задана строка или список, пытаемся взять первую строку
+            и если она выглядит как URI (rtsp://, rtsps://, http://, https://) — используем её
+          - иначе используем fallback self.stream_server + '/' + stream_name
         """
-        # Быстро проверяем и ставим флаг под блокировкой
-        with self._cleanup_lock:
-            if self._cleanup_in_progress:
-                logging.debug("Очистка уже выполняется; новый фоновый запуск не требуется.")
-                return
-            self._cleanup_in_progress = True
+        streams = self.go2rtc_config.get('streams', {}) or {}
+        raw = streams.get(stream_name)
+        used_raw = None
 
-            def _worker():
-                try:
-                    logging.info("Запущена фоновая очистка директорий.")
-                    try:
-                        self.clean_camera_folders(min_age_seconds=min_age_seconds)
-                    except Exception as e:
-                        logging.exception("Ошибка в фоновом процессе очистки: %s", e)
-                    logging.info("Фоновая очистка директорий завершена.")
-                finally:
-                    with self._cleanup_lock:
-                        self._cleanup_in_progress = False
+        candidate = None
+        if isinstance(raw, str):
+            candidate = self._parse_raw_uri_candidate(raw)
+            used_raw = raw
+        elif isinstance(raw, (list, tuple)):
+            for item in raw:
+                if isinstance(item, str):
+                    candidate = self._parse_raw_uri_candidate(item)
+                    used_raw = item
+                    break
 
-            t = threading.Thread(target=_worker, daemon=True)
-            self._cleanup_thread = t
-            t.start()
+        if isinstance(candidate, str):
+            lc = candidate.lower()
+            if lc.startswith("rtsp://") or lc.startswith("rtsps://") or lc.startswith("http://") or lc.startswith("https://"):
+                return candidate, used_raw
 
-    def _start_recording_for_stream(self, stream_name: str, duration: int) -> subprocess.Popen:
+        # fallback
+        fallback = f"{self.stream_server.rstrip('/')}/{stream_name}"
+        return fallback, None
+
+    def _start_recording_for_stream(self, stream_name: str, duration: int) -> Optional[subprocess.Popen]:
         """
-        Вспомогательный метод для запуска записи для одного потока.
-
-        :param stream_name: Имя потока.
-        :param duration: Длительность записи (в секундах).
-        :return: Запущенный процесс.
+        Запускает ffmpeg для конкретного потока, используя выбранный input URL.
+        Возвращает Popen если процесс успешно запущен и жив, иначе None.
         """
         now = datetime.now()
         timestamp = now.strftime("%H-%M")
@@ -308,6 +237,9 @@ class VideoRecorder:
         directory = self.base_dir / stream_name / date_path
         directory.mkdir(parents=True, exist_ok=True)
         output_file = directory / f"{timestamp}.mp4"
+
+        input_url, used_raw = self._choose_input_url(stream_name)
+        logger.debug("Stream %s: used_raw=%r input_url=%s output=%s", stream_name, used_raw, input_url, output_file)
 
         command = [
             'ffmpeg',
@@ -319,69 +251,215 @@ class VideoRecorder:
             '-fflags', '+nobuffer+genpts+discardcorrupt',
             '-flags', 'low_delay',
             '-use_wallclock_as_timestamps', '1',
-            '-i', f"{self.stream_server}/{stream_name}",
+            '-i', input_url,
             '-reset_timestamps', '1',
-            '-strftime', '1',
             '-c:v', 'copy',
             '-c:a', 'aac',
-            '-strict', 'experimental',
             '-t', str(duration),
             str(output_file)
         ]
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            preexec_fn=os.setsid
-        )
-        logging.info(f"Начата запись для {stream_name} в файл {output_file} на {duration} сек (PID {process.pid}).")
-        return process
+
+        try:
+            proc = subprocess.Popen(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                preexec_fn=os.setsid
+            )
+        except Exception as e:
+            logger.exception("Не удалось запустить ffmpeg для %s (command: %s): %s", stream_name, command, e)
+            return None
+
+        # Короткая задержка — если процесс сразу падает, не добавляем его в active_processes.
+        time.sleep(0.25)
+        if proc.poll() is not None:
+            logger.warning("ffmpeg для %s сразу завершился с кодом %s (input=%s).", stream_name, proc.poll(), input_url)
+            return None
+
+        logger.info("Начата запись для %s -> %s (PID %s)", stream_name, output_file, proc.pid)
+        return proc
+
+    def _prune_finished_processes(self) -> None:
+        """
+        Удаляет завершённые процессы из active_processes.
+        """
+        with self.process_lock:
+            for stream in list(self.active_processes.keys()):
+                info = self.active_processes.get(stream)
+                if not info:
+                    self.active_processes.pop(stream, None)
+                    continue
+                proc = info.get("process")
+                try:
+                    if proc is None or proc.poll() is not None:
+                        self.active_processes.pop(stream, None)
+                        logger.debug("Pruned finished process entry for stream %s", stream)
+                except Exception:
+                    logger.exception("Ошибка при проверке статуса процесса для %s", stream)
+                    self.active_processes.pop(stream, None)
+
+    def _terminate_existing_process(self, stream_name: str, proc: subprocess.Popen, grace: float = 1.0) -> None:
+        """
+        Попытаться корректно завершить существующий процесс записи (TERM, подождать, затем KILL).
+        """
+        try:
+            logger.info("Завершаю текущую запись %s (PID %s) чтобы запустить новую по расписанию.", stream_name, proc.pid)
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except ProcessLookupError:
+            logger.warning("Процесс %s уже отсутствует при попытке TERM.", stream_name)
+        except Exception:
+            logger.exception("Ошибка при отправке SIGTERM процессу %s", stream_name)
+
+        # даём время на завершение
+        t0 = time.time()
+        while time.time() - t0 < grace:
+            if proc.poll() is not None:
+                return
+            time.sleep(0.05)
+
+        # если не завершился — принудительно убиваем
+        try:
+            if proc.poll() is None:
+                logger.info("SIGKILL процессу %s (PID %s) — не завершился после TERM.", stream_name, proc.pid)
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            logger.warning("Процесс %s уже отсутствует при попытке KILL.", stream_name)
+        except Exception:
+            logger.exception("Ошибка при отправке SIGKILL процессу %s", stream_name)
 
     def record_streams(self, duration: int) -> Dict[str, Any]:
         """
         Запускает запись для потоков из go2rtc-конфигурации, но только для тех, у кого quota (rec in GB) > 0.
-
-        :param duration: Длительность записи (сек).
-        :return: Словарь с информацией по запущенным процессам.
+        Если уже есть активный процесс для потока — он будет корректно завершён и заменён новым,
+        чтобы гарантировать старт записи ровно по расписанию.
         """
         now = datetime.now()
         streams = self.go2rtc_config.get('streams', {}) or {}
+
+        try:
+            self._prune_finished_processes()
+        except Exception:
+            logger.exception("Ошибка при очистке завершённых процессов перед стартом записей.")
+
+        logger.info("record_streams: total streams in go2rtc=%d duration=%d", len(streams), duration)
+        started = 0
         for stream_name in streams.keys():
             try:
                 quota = float(self.camera_quotas_gb.get(stream_name, 0.0))
                 if quota <= 0.0:
-                    logging.debug(f"Пропуск записи для {stream_name}: quota не задана или равна 0.")
+                    logger.debug("Skip %s: quota=%s", stream_name, quota)
                     continue
 
-                # если уже есть активный процесс для потока — пропускаем запуск дубликата
+                # Если уже есть живой процесс — завершаем его, чтобы запустить новый по расписанию
                 with self.process_lock:
-                    if stream_name in self.active_processes:
-                        proc_info = self.active_processes[stream_name]
-                        proc = proc_info.get("process")
-                        if proc and proc.poll() is None:
-                            logging.debug(f"Процесс для {stream_name} уже запущен (PID {proc.pid}), пропускаем новый запуск.")
-                            continue
+                    existing = self.active_processes.get(stream_name)
+                    if existing:
+                        proc_existing = existing.get("process")
+                        if proc_existing and proc_existing.poll() is None:
+                            # завершаем существующий корректно (TERM -> KILL) перед стартом нового
+                            try:
+                                self._terminate_existing_process(stream_name, proc_existing, grace=1.0)
+                            except Exception:
+                                logger.exception("Ошибка при завершении существующего процесса для %s", stream_name)
+                            # удаляем запись (независимо от успеха) — мы заменим её ниже
+                            self.active_processes.pop(stream_name, None)
 
                 proc = self._start_recording_for_stream(stream_name, duration)
+                if not proc:
+                    logger.warning("Recording for %s was not started (ffmpeg failed or exited).", stream_name)
+                    continue
+
                 with self.process_lock:
-                    # Сохраняем дополнительные данные: время запуска и планируемую длительность.
                     self.active_processes[stream_name] = {
                         "process": proc,
                         "start_time": now,
                         "duration": duration
                     }
+                started += 1
             except Exception as e:
-                logging.error(f"Ошибка при запуске записи для {stream_name}: {e}")
+                logger.exception("Ошибка при запуске записи для %s: %s", stream_name, e)
 
-        # Запускаем очистку в фоне, чтобы она не блокировала старт записи
+        logger.info("record_streams finished: started=%d of %d", started, len(streams))
+
         try:
             self._start_background_cleanup()
         except Exception:
-            logging.exception("Не удалось запустить фоновую очистку директорий.")
+            logger.exception("Не удалось запустить фоновую очистку директорий.")
 
-        # Для удобства можно возвращать копию active_processes (но это необязательно)
         with self.process_lock:
             return self.active_processes.copy()
+
+    def clean_camera_folders(self, min_age_seconds: int = 3600) -> None:
+        """
+        Удаляет старые файлы и пустые директории. Использует per-camera quota (GB), если задана.
+        """
+        now = time.time()
+        for camera_dir in self.base_dir.iterdir():
+            if camera_dir.is_dir():
+                cam_name = camera_dir.name
+                cam_quota_gb = float(self.camera_quotas_gb.get(cam_name, self.target_size_gb))
+                try:
+                    size_bytes = sum(f.stat().st_size for f in camera_dir.glob('**/*') if f.is_file())
+                    size_gb = size_bytes / (1024 ** 3)
+                except Exception as e:
+                    logger.error("Ошибка при расчёте размера %s: %s", camera_dir, e)
+                    continue
+
+                space_to_free_gb = size_gb - cam_quota_gb
+                if space_to_free_gb > 0:
+                    logger.info("Очистка %s: нужно освободить %.3f ГБ (quota %.3f ГБ).", camera_dir, space_to_free_gb, cam_quota_gb)
+                    try:
+                        files = sorted((f for f in camera_dir.glob('**/*') if f.is_file()), key=lambda f: f.stat().st_mtime)
+                    except Exception as e:
+                        logger.error("Ошибка сортировки файлов в %s: %s", camera_dir, e)
+                        continue
+
+                    for file in files:
+                        if space_to_free_gb <= 0:
+                            break
+                        try:
+                            file_size_gb = file.stat().st_size / (1024 ** 3)
+                            file.unlink()
+                            logger.info("Удалён файл %s размером %.3f ГБ.", file, file_size_gb)
+                            space_to_free_gb -= file_size_gb
+                        except Exception as e:
+                            logger.error("Ошибка при удалении файла %s: %s", file, e)
+
+        for root, dirs, _ in os.walk(self.base_dir, topdown=False):
+            for dir_name in dirs:
+                dir_path = Path(root) / dir_name
+                try:
+                    folder_age = now - dir_path.stat().st_ctime
+                    if folder_age < min_age_seconds:
+                        continue
+                    if not any(dir_path.iterdir()):
+                        dir_path.rmdir()
+                        logger.info("Удалена пустая директория: %s", dir_path)
+                except Exception as e:
+                    logger.error("Ошибка при удалении директории %s: %s", dir_path, e)
+
+    def _start_background_cleanup(self, min_age_seconds: int = 3600) -> None:
+        with self._cleanup_lock:
+            if self._cleanup_in_progress:
+                logger.debug("Очистка уже выполняется; новый фоновый запуск не требуется.")
+                return
+            self._cleanup_in_progress = True
+
+            def _worker():
+                try:
+                    logger.info("Запущена фоновая очистка директорий.")
+                    try:
+                        self.clean_camera_folders(min_age_seconds=min_age_seconds)
+                    except Exception as e:
+                        logger.exception("Ошибка в фоновом процессе очистки: %s", e)
+                    logger.info("Фоновая очистка директорий завершена.")
+                finally:
+                    with self._cleanup_lock:
+                        self._cleanup_in_progress = False
+
+            t = threading.Thread(target=_worker, daemon=True)
+            self._cleanup_thread = t
+            t.start()
 
     def cleanup_processes(self) -> None:
         """
@@ -393,68 +471,77 @@ class VideoRecorder:
                 if proc.poll() is None:
                     try:
                         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                        logging.info(f"Завершён процесс для {stream}.")
+                        logger.info("Завершён процесс для %s.", stream)
                     except ProcessLookupError:
-                        logging.warning(f"Процесс {stream} уже завершён.")
+                        logger.warning("Процесс %s уже завершён.", stream)
                     except Exception as e:
-                        logging.error(f"Ошибка при завершении процесса {stream}: {e}")
+                        logger.error("Ошибка при завершении процесса %s: %s", stream, e)
                 self.active_processes.pop(stream, None)
 
     def handle_termination(self, signum: int, frame) -> None:
         """
-        Обработчик сигналов завершения. Корректно завершает процессы и очищает планировщик.
+        Обработчик сигналов завершения.
         """
         signal_names = {signal.SIGINT: "SIGINT", signal.SIGTERM: "SIGTERM", signal.SIGHUP: "SIGHUP"}
-        logging.info(f"Получен сигнал {signal_names.get(signum, str(signum))}, завершаю работу.")
+        logger.info("Получен сигнал %s, завершаю работу.", signal_names.get(signum, str(signum)))
         self.cleanup_processes()
         time.sleep(5)
-        # Принудительное завершение оставшихся процессов
         with self.process_lock:
             for stream, info in list(self.active_processes.items()):
-                proc = info["process"]
-                if proc.poll() is None:
+                proc = info.get("process")
+                if proc and proc.poll() is None:
                     try:
                         os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                        logging.info(f"Принудительно завершён процесс для {stream}.")
+                        logger.info("Принудительно завершён процесс для %s.", stream)
                     except ProcessLookupError:
-                        logging.warning(f"Процесс {stream} уже завершён.")
+                        logger.warning("Процесс %s уже завершён.", stream)
                     except Exception as e:
-                        logging.error(f"Ошибка при принудительном завершении процесса {stream}: {e}")
-                    self.active_processes.pop(stream, None)
+                        logger.error("Ошибка при принудительном завершении процесса %s: %s", stream, e)
+                self.active_processes.pop(stream, None)
         schedule.clear()
         exit(0)
 
     def monitor_processes(self, check_interval: int = 5, restart_threshold: int = 5) -> None:
         """
-        В фоне проверяет активные процессы. Если процесс закончился раньше завершения запланированного времени[...]
-        перезапускает его на оставшуюся длительность.
-
-        :param check_interval: Интервал проверки в секундах.
-        :param restart_threshold: Если оставшееся время записи больше этого порога (сек), запускается повтор.
+        Монитор активных процессов: если процесс умер преждевременно — пытаемся перезапустить.
         """
         while True:
+            try:
+                self._prune_finished_processes()
+            except Exception:
+                logger.exception("Ошибка при периодическом prune перед мониторингом.")
+
             with self.process_lock:
                 for stream, info in list(self.active_processes.items()):
-                    proc = info["process"]
-                    start_time = info["start_time"]
-                    duration = info["duration"]
+                    proc = info.get("process")
+                    start_time = info.get("start_time")
+                    duration = info.get("duration")
                     planned_end = start_time + timedelta(seconds=duration)
                     now = datetime.now()
-                    if proc.poll() is not None:
+                    try:
+                        finished = proc.poll() is not None
+                    except Exception:
+                        finished = True
+
+                    if finished:
                         remaining = (planned_end - now).total_seconds()
                         if remaining > restart_threshold:
-                            logging.warning(f"Процесс для {stream} завершился преждевременно. Перезапуск на оставшиеся {remaining:.0f} сек.")
+                            logger.warning("Процесс для %s завершился преждевременно. Перезапуск на оставшиеся %d сек.", stream, int(remaining))
                             try:
                                 new_proc = self._start_recording_for_stream(stream, int(remaining))
-                                self.active_processes[stream] = {
-                                    "process": new_proc,
-                                    "start_time": datetime.now(),
-                                    "duration": int(remaining)
-                                }
+                                if new_proc:
+                                    self.active_processes[stream] = {
+                                        "process": new_proc,
+                                        "start_time": datetime.now(),
+                                        "duration": int(remaining)
+                                    }
+                                else:
+                                    # удалим запись — не смогли перезапустить
+                                    self.active_processes.pop(stream, None)
                             except Exception as e:
-                                logging.error(f"Ошибка перезапуска записи для {stream}: {e}")
+                                logger.error("Ошибка перезапуска записи для %s: %s", stream, e)
                         else:
-                            logging.info(f"Запись для {stream} завершена корректно.")
+                            logger.info("Запись для %s завершена корректно.", stream)
                             self.active_processes.pop(stream, None)
             time.sleep(check_interval)
 
@@ -469,25 +556,22 @@ class ConfigChangeHandler(FileSystemEventHandler):
     def on_modified(self, event) -> None:
         # Если изменён основной конфигурационный файл – перезагружаем его
         if event.src_path == str(Path(self.recorder.config_file).resolve()):
-            logging.info("Обнаружено изменение основного конфигурационного файла, перезагружаем...")
+            logger.info("Обнаружено изменение основного конфигурационного файла, перезагружаем...")
             self.recorder.reload_config()
         # Если изменён конфиг go2rtc – перечитываем его и перестраиваем квоты
         elif event.src_path == str(self.recorder.go2rtc_config_path.resolve()):
-            logging.info("Обнаружено изменение go2rtc-конфигурационного файла, перезагружаем...")
+            logger.info("Обнаружено изменение go2rtc-конфигурационного файла, перезагружаем...")
             try:
                 new_go2rtc_config = self.recorder.load_go2rtc_config()
                 self.recorder.go2rtc_config = new_go2rtc_config
                 self.recorder.camera_quotas_gb = self.recorder._build_camera_quotas(new_go2rtc_config)
-                logging.info("Конфигурация go2rtc успешно перезагружена и квоты обновлены.")
+                logger.info("Конфигурация go2rtc успешно перезагружена и квоты обновлены.")
             except Exception as e:
-                logging.error(f"Ошибка перезагрузки go2rtc-конфигурации: {e}")
+                logger.error(f"Ошибка перезагрузки go2rtc-конфигурации: {e}")
 
 def start_config_observer(recorder: VideoRecorder) -> Observer:
     """
     Запускает наблюдателя watchdog для конфигурационного файла.
-
-    :param recorder: Экземпляр VideoRecorder.
-    :return: Объект Observer.
     """
     event_handler = ConfigChangeHandler(recorder)
     observer = Observer()
@@ -501,9 +585,6 @@ def start_config_observer(recorder: VideoRecorder) -> Observer:
 def create_dashboard_app(recorder: VideoRecorder) -> Flask:
     """
     Создает Flask‑приложение для отображения статуса записи.
-
-    :param recorder: Экземпляр VideoRecorder.
-    :return: Объект Flask.
     """
     app = Flask(__name__)
 
