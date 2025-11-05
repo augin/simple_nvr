@@ -119,6 +119,7 @@ class VideoRecorder:
     - при очистке директорий учитывается quota (rec в GB) для конкретной камеры, если задана,
       иначе используется глобальная target_size_gb.
     - при старте записи (record_streams) запускаем запись только для тех камер, у которых quota > 0.
+    - очистка запускается в фоне (в отдельном потоке), чтобы не блокировать старт записи.
     """
     def __init__(self, dvr_config_file: str) -> None:
         self.config_file: str = dvr_config_file
@@ -137,6 +138,11 @@ class VideoRecorder:
         # "duration" – планируемая длительность записи (в секундах).
         self.active_processes: Dict[str, Dict[str, Any]] = {}
         self.process_lock = threading.Lock()
+
+        # Для фона очистки: флаг и блокировка, чтобы не стартовать несколько clean-циклов одновременно
+        self._cleanup_lock = threading.Lock()
+        self._cleanup_in_progress = False
+        self._cleanup_thread: Optional[threading.Thread] = None
 
     def load_go2rtc_config(self) -> Dict[str, Any]:
         """
@@ -260,6 +266,34 @@ class VideoRecorder:
                 except Exception as e:
                     logging.error(f"Ошибка при удалении директории {dir_path}: {e}")
 
+    def _start_background_cleanup(self, min_age_seconds: int = 3600) -> None:
+        """
+        Запускает clean_camera_folders в отдельном потоке, если в данный момент очистка не выполняется.
+        Это позволяет не блокировать record_streams.
+        """
+        # Быстро проверяем и ставим флаг под блокировкой
+        with self._cleanup_lock:
+            if self._cleanup_in_progress:
+                logging.debug("Очистка уже выполняется; новый фоновый запуск не требуется.")
+                return
+            self._cleanup_in_progress = True
+
+            def _worker():
+                try:
+                    logging.info("Запущена фоновая очистка директорий.")
+                    try:
+                        self.clean_camera_folders(min_age_seconds=min_age_seconds)
+                    except Exception as e:
+                        logging.exception("Ошибка в фоновом процессе очистки: %s", e)
+                    logging.info("Фоновая очистка директорий завершена.")
+                finally:
+                    with self._cleanup_lock:
+                        self._cleanup_in_progress = False
+
+            t = threading.Thread(target=_worker, daemon=True)
+            self._cleanup_thread = t
+            t.start()
+
     def _start_recording_for_stream(self, stream_name: str, duration: int) -> subprocess.Popen:
         """
         Вспомогательный метод для запуска записи для одного потока.
@@ -334,8 +368,12 @@ class VideoRecorder:
             except Exception as e:
                 logging.error(f"Ошибка при запуске записи для {stream_name}: {e}")
 
-        # Очистка директорий после старта записей
-        self.clean_camera_folders()
+        # Запускаем очистку в фоне, чтобы она не блокировала старт записи
+        try:
+            self._start_background_cleanup()
+        except Exception:
+            logging.exception("Не удалось запустить фоновую очистку директорий.")
+
         # Для удобства можно возвращать копию active_processes (но это необязательно)
         with self.process_lock:
             return self.active_processes.copy()
@@ -480,7 +518,8 @@ def create_dashboard_app(recorder: VideoRecorder) -> Flask:
         return jsonify({
             "active_processes": active,
             "config": recorder.config,
-            "go2rtc_camera_quotas_gb": recorder.camera_quotas_gb
+            "go2rtc_camera_quotas_gb": recorder.camera_quotas_gb,
+            "cleanup_in_progress": recorder._cleanup_in_progress
         })
 
     return app
