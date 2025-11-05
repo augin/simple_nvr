@@ -253,6 +253,7 @@ class VideoRecorder:
             '-use_wallclock_as_timestamps', '1',
             '-i', input_url,
             '-reset_timestamps', '1',
+            '-strftime', '1',
             '-c:v', 'copy',
             '-c:a', 'aac',
             '-t', str(duration),
