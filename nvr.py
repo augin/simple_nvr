@@ -343,17 +343,13 @@ class VideoRecorder:
 
             # запускаем новый процесс независимо от того, есть ли старый
             proc = self._start_recording_for_stream(stream_name, duration)
-            if not proc:
-                logger.warning("Recording for %s was not started.", stream_name)
-                continue
-
-            with self.process_lock:
+            if proc:
+              with self.process_lock:
                 self.active_processes.setdefault(stream_name, []).append({
-                    "process": proc,
-                    "start_time": now,
-                    "duration": duration
+                "process": proc,
+                "start_time": now,
+                "duration": duration
                 })
-            started += 1
         except Exception as e:
             logger.exception("Ошибка при запуске записи для %s: %s", stream_name, e)
 
