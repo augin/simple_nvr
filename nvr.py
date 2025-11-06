@@ -120,7 +120,7 @@ class VideoRecorder:
         self.camera_quotas_gb: Dict[str, float] = self._build_camera_quotas(self.go2rtc_config)
         # Словарь активных процессов; для каждого потока хранится одна запись
         # {"process": Popen, "start_time": datetime, "duration": int}
-        self.active_processes: Dict[str, Dict[str, Any]] = {}
+        self.active_processes: Dict[str, List[Dict[str, Any]]] = {}
         self.process_lock = threading.Lock()
 
         # Для фона очистки: флаг и блокировка, чтобы не стартовать несколько clean-циклов одновременно
@@ -281,23 +281,19 @@ class VideoRecorder:
         return proc
 
     def _prune_finished_processes(self) -> None:
-        """
-        Удаляет завершённые процессы из active_processes.
-        """
-        with self.process_lock:
-            for stream in list(self.active_processes.keys()):
-                info = self.active_processes.get(stream)
-                if not info:
-                    self.active_processes.pop(stream, None)
-                    continue
+    with self.process_lock:
+        for stream, infos in list(self.active_processes.items()):
+            alive = []
+            for info in infos:
                 proc = info.get("process")
-                try:
-                    if proc is None or proc.poll() is not None:
-                        self.active_processes.pop(stream, None)
-                        logger.debug("Pruned finished process entry for stream %s", stream)
-                except Exception:
-                    logger.exception("Ошибка при проверке статуса процесса для %s", stream)
-                    self.active_processes.pop(stream, None)
+                if proc and proc.poll() is None:
+                    alive.append(info)
+                else:
+                    logger.debug("Pruned finished process for stream %s", stream)
+            if alive:
+                self.active_processes[stream] = alive
+            else:
+                self.active_processes.pop(stream, None)
 
     def _terminate_existing_process(self, stream_name: str, proc: subprocess.Popen, grace: float = 1.0) -> None:
         """
@@ -329,56 +325,48 @@ class VideoRecorder:
             logger.exception("Ошибка при отправке SIGKILL процессу %s", stream_name)
 
     def record_streams(self, duration: int) -> Dict[str, Any]:
-        """
-        Запускает запись для потоков из go2rtc-конфигурации, но только для тех, у кого quota (rec in GB) > 0.
-        Если уже есть активный процесс для потока — он будет корректно завершён и заменён новым,
-        чтобы гарантировать старт записи ровно по расписанию.
-        """
-        now = datetime.now()
-        streams = self.go2rtc_config.get('streams', {}) or {}
+    now = datetime.now()
+    streams = self.go2rtc_config.get('streams', {}) or {}
 
+    try:
+        self._prune_finished_processes()
+    except Exception:
+        logger.exception("Ошибка при очистке завершённых процессов.")
+
+    logger.info("record_streams: total streams=%d duration=%d", len(streams), duration)
+    started = 0
+    for stream_name in streams.keys():
         try:
-            self._prune_finished_processes()
-        except Exception:
-            logger.exception("Ошибка при очистке завершённых процессов перед стартом записей.")
+            quota = float(self.camera_quotas_gb.get(stream_name, 0.0))
+            if quota <= 0.0:
+                continue
 
-        logger.info("record_streams: total streams in go2rtc=%d duration=%d", len(streams), duration)
-        started = 0
-        for stream_name in streams.keys():
-            try:
-                quota = float(self.camera_quotas_gb.get(stream_name, 0.0))
-                if quota <= 0.0:
-                    logger.debug("Skip %s: quota=%s", stream_name, quota)
-                    continue
+            # запускаем новый процесс независимо от того, есть ли старый
+            proc = self._start_recording_for_stream(stream_name, duration)
+            if not proc:
+                logger.warning("Recording for %s was not started.", stream_name)
+                continue
 
-                # Если уже есть живой процесс — завершаем его, чтобы запустить новый по расписанию
-                with self.process_lock:
-                    existing = self.active_processes.get(stream_name)
-                    if existing:
-                        proc_existing = existing.get("process")
-                        if proc_existing and proc_existing.poll() is None:
-                            # завершаем существующий корректно (TERM -> KILL) перед стартом нового
-                            try:
-                                self._terminate_existing_process(stream_name, proc_existing, grace=1.0)
-                            except Exception:
-                                logger.exception("Ошибка при завершении существующего процесса для %s", stream_name)
-                            # удаляем запись (независимо от успеха) — мы заменим её ниже
-                            self.active_processes.pop(stream_name, None)
+            with self.process_lock:
+                self.active_processes.setdefault(stream_name, []).append({
+                    "process": proc,
+                    "start_time": now,
+                    "duration": duration
+                })
+            started += 1
+        except Exception as e:
+            logger.exception("Ошибка при запуске записи для %s: %s", stream_name, e)
 
-                proc = self._start_recording_for_stream(stream_name, duration)
-                if not proc:
-                    logger.warning("Recording for %s was not started (ffmpeg failed or exited).", stream_name)
-                    continue
+    logger.info("record_streams finished: started=%d of %d", started, len(streams))
 
-                with self.process_lock:
-                    self.active_processes[stream_name] = {
-                        "process": proc,
-                        "start_time": now,
-                        "duration": duration
-                    }
-                started += 1
-            except Exception as e:
-                logger.exception("Ошибка при запуске записи для %s: %s", stream_name, e)
+    try:
+        self._start_background_cleanup()
+    except Exception:
+        logger.exception("Не удалось запустить фоновую очистку директорий.")
+
+    with self.process_lock:
+        return {k: v.copy() for k, v in self.active_processes.items()}
+
 
         logger.info("record_streams finished: started=%d of %d", started, len(streams))
 
