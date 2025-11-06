@@ -120,7 +120,7 @@ class VideoRecorder:
         self.camera_quotas_gb: Dict[str, float] = self._build_camera_quotas(self.go2rtc_config)
         # Словарь активных процессов; для каждого потока хранится одна запись
         # {"process": Popen, "start_time": datetime, "duration": int}
-        self.active_processes: Dict[str, Dict[str, Any]] = {}
+        self.active_processes: Dict[str, List[Dict[str, Any]]] = {}
         self.process_lock = threading.Lock()
 
         # Для фона очистки: флаг и блокировка, чтобы не стартовать несколько clean-циклов одновременно
@@ -129,6 +129,22 @@ class VideoRecorder:
         self._cleanup_thread: Optional[threading.Thread] = None
 
         logger.debug("Initialized VideoRecorder; streams keys: %s", list(self.go2rtc_config.get('streams', {}).keys()))
+
+    def _schedule_process_termination(self, stream_name: str, proc: subprocess.Popen, duration: int) -> None:
+        def _terminate():
+            time.sleep(duration)
+            if proc.poll() is None:
+                try:
+                    logger.info("Принудительное завершение процесса %s по истечении duration (%d сек).", stream_name, duration)
+                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                    time.sleep(1)
+                    if proc.poll() is None:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                        logger.info("SIGKILL процессу %s (PID %s)", stream_name, proc.pid)
+                except Exception as e:
+                    logger.error("Ошибка при принудительном завершении процесса %s: %s", stream_name, e)
+
+        threading.Thread(target=_terminate, daemon=True).start()
 
     def load_go2rtc_config(self) -> Dict[str, Any]:
         """
@@ -285,18 +301,15 @@ class VideoRecorder:
         Удаляет завершённые процессы из active_processes.
         """
         with self.process_lock:
-            for stream in list(self.active_processes.keys()):
-                info = self.active_processes.get(stream)
-                if not info:
-                    self.active_processes.pop(stream, None)
-                    continue
-                proc = info.get("process")
-                try:
-                    if proc is None or proc.poll() is not None:
-                        self.active_processes.pop(stream, None)
-                        logger.debug("Pruned finished process entry for stream %s", stream)
-                except Exception:
-                    logger.exception("Ошибка при проверке статуса процесса для %s", stream)
+            for stream, proc_list in list(self.active_processes.items()):
+                new_list = []
+                for info in proc_list:
+                    proc = info.get("process")
+                    if proc and proc.poll() is None:
+                        new_list.append(info)
+                if new_list:
+                    self.active_processes[stream] = new_list
+                else:
                     self.active_processes.pop(stream, None)
 
     def _terminate_existing_process(self, stream_name: str, proc: subprocess.Popen, grace: float = 1.0) -> None:
@@ -351,31 +364,18 @@ class VideoRecorder:
                     logger.debug("Skip %s: quota=%s", stream_name, quota)
                     continue
 
-                # Если уже есть живой процесс — завершаем его, чтобы запустить новый по расписанию
-                with self.process_lock:
-                    existing = self.active_processes.get(stream_name)
-                    if existing:
-                        proc_existing = existing.get("process")
-                        if proc_existing and proc_existing.poll() is None:
-                            # завершаем существующий корректно (TERM -> KILL) перед стартом нового
-                            try:
-                                self._terminate_existing_process(stream_name, proc_existing, grace=1.0)
-                            except Exception:
-                                logger.exception("Ошибка при завершении существующего процесса для %s", stream_name)
-                            # удаляем запись (независимо от успеха) — мы заменим её ниже
-                            self.active_processes.pop(stream_name, None)
-
                 proc = self._start_recording_for_stream(stream_name, duration)
                 if not proc:
                     logger.warning("Recording for %s was not started (ffmpeg failed or exited).", stream_name)
                     continue
 
                 with self.process_lock:
-                    self.active_processes[stream_name] = {
+                    self.active_processes.setdefault(stream_name, []).append({
                         "process": proc,
                         "start_time": now,
                         "duration": duration
-                    }
+                    })
+                self._schedule_process_termination(stream_name, proc, duration)
                 started += 1
             except Exception as e:
                 logger.exception("Ошибка при запуске записи для %s: %s", stream_name, e)
@@ -467,17 +467,18 @@ class VideoRecorder:
         Корректно завершает все активные процессы.
         """
         with self.process_lock:
-            for stream, info in list(self.active_processes.items()):
-                proc = info["process"]
-                if proc.poll() is None:
-                    try:
-                        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                        logger.info("Завершён процесс для %s.", stream)
-                    except ProcessLookupError:
-                        logger.warning("Процесс %s уже завершён.", stream)
-                    except Exception as e:
-                        logger.error("Ошибка при завершении процесса %s: %s", stream, e)
-                self.active_processes.pop(stream, None)
+            for stream, proc_list in list(self.active_processes.items()):
+                for info in proc_list:
+                    proc = info["process"]
+                    if proc.poll() is None:
+                        try:
+                            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                            logger.info("Завершён процесс для %s (PID %s).", stream, proc.pid)
+                        except ProcessLookupError:
+                            logger.warning("Процесс %s уже завершён.", stream)
+                        except Exception as e:
+                            logger.error("Ошибка при завершении процесса %s: %s", stream, e)
+            self.active_processes.clear()
 
     def handle_termination(self, signum: int, frame) -> None:
         """
@@ -504,7 +505,7 @@ class VideoRecorder:
 
     def monitor_processes(self, check_interval: int = 5, restart_threshold: int = 5) -> None:
         """
-        Монитор активных процессов: если процесс умер преждевременно — пытаемся перезапустить.
+        Монитор активных процессов: если процесс завершился преждевременно — перезапускаем.
         """
         while True:
             try:
@@ -513,37 +514,45 @@ class VideoRecorder:
                 logger.exception("Ошибка при периодическом prune перед мониторингом.")
 
             with self.process_lock:
-                for stream, info in list(self.active_processes.items()):
-                    proc = info.get("process")
-                    start_time = info.get("start_time")
-                    duration = info.get("duration")
-                    planned_end = start_time + timedelta(seconds=duration)
-                    now = datetime.now()
-                    try:
-                        finished = proc.poll() is not None
-                    except Exception:
-                        finished = True
+                for stream, proc_list in list(self.active_processes.items()):
+                    updated_list = []
+                    for info in proc_list:
+                        proc = info.get("process")
+                        start_time = info.get("start_time")
+                        duration = info.get("duration")
+                        planned_end = start_time + timedelta(seconds=duration)
+                        now = datetime.now()
 
-                    if finished:
-                        remaining = (planned_end - now).total_seconds()
-                        if remaining > restart_threshold:
-                            logger.warning("Процесс для %s завершился преждевременно. Перезапуск на оставшиеся %d сек.", stream, int(remaining))
-                            try:
-                                new_proc = self._start_recording_for_stream(stream, int(remaining))
-                                if new_proc:
-                                    self.active_processes[stream] = {
-                                        "process": new_proc,
-                                        "start_time": datetime.now(),
-                                        "duration": int(remaining)
-                                    }
-                                else:
-                                    # удалим запись — не смогли перезапустить
-                                    self.active_processes.pop(stream, None)
-                            except Exception as e:
-                                logger.error("Ошибка перезапуска записи для %s: %s", stream, e)
+                        try:
+                            finished = proc.poll() is not None
+                        except Exception:
+                            finished = True
+
+                        if finished:
+                            remaining = (planned_end - now).total_seconds()
+                            if remaining > restart_threshold:
+                                logger.warning("Процесс для %s завершился преждевременно. Перезапуск на оставшиеся %d сек.", stream, int(remaining))
+                                try:
+                                    new_proc = self._start_recording_for_stream(stream, int(remaining))
+                                    if new_proc:
+                                        updated_list.append({
+                                            "process": new_proc,
+                                            "start_time": datetime.now(),
+                                            "duration": int(remaining)
+                                        })
+                                        self._schedule_process_termination(stream, new_proc, int(remaining))
+                                except Exception as e:
+                                    logger.error("Ошибка перезапуска записи для %s: %s", stream, e)
+                            else:
+                                logger.info("Запись для %s завершена корректно.", stream)
                         else:
-                            logger.info("Запись для %s завершена корректно.", stream)
-                            self.active_processes.pop(stream, None)
+                            updated_list.append(info)
+
+                    if updated_list:
+                        self.active_processes[stream] = updated_list
+                    else:
+                        self.active_processes.pop(stream, None)
+
             time.sleep(check_interval)
 
 # ===================== Watchdog: Отслеживание изменений конфигурации =====================
