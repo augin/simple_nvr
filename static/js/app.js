@@ -4,6 +4,8 @@ let currentConfig = {};
 let currentFile = '';
 let currentFolder = '';
 let archiveCamera = '';
+let alarmLogTimer = null;
+let alarmRunning = false;
 
 document.addEventListener('DOMContentLoaded', () => {
   loadTheme();
@@ -25,6 +27,16 @@ function switchTab(tab) {
   }
   if (tab === 'archive') {
     fetchArchiveCameras();
+  }
+  if (tab === 'alarm') {
+    loadAlarmStatus();
+    loadAlarmLog();
+    alarmLogTimer = setInterval(loadAlarmLog, 5000);
+  } else {
+    if (alarmLogTimer) {
+      clearInterval(alarmLogTimer);
+      alarmLogTimer = null;
+    }
   }
 }
 
@@ -565,5 +577,93 @@ async function saveSettings(e) {
   } catch (err) {
     console.error('Error saving settings:', err);
     alert('Ошибка сохранения');
+  }
+}
+
+async function loadAlarmStatus() {
+  try {
+    const resp = await fetch('/api/alarm/status');
+    const data = await resp.json();
+    alarmRunning = data.running;
+
+    const led = document.getElementById('alarm-led');
+    const text = document.getElementById('alarm-status-text');
+    const btn = document.getElementById('alarm-toggle-btn');
+    const portInfo = document.getElementById('alarm-port-info');
+    const mqttInfo = document.getElementById('alarm-mqtt-info');
+    const eventsInfo = document.getElementById('alarm-events-info');
+
+    if (led) {
+      led.className = 'led ' + (data.running ? 'led-green' : 'led-off');
+    }
+    if (text) {
+      text.textContent = data.running ? 'Работает' : 'Остановлен';
+    }
+    if (btn) {
+      btn.textContent = data.running ? 'Остановить' : 'Запустить';
+      btn.className = 'btn ' + (data.running ? 'btn-danger' : 'btn-primary');
+    }
+    if (portInfo) {
+      portInfo.textContent = 'Порт: ' + (data.port || 15002);
+    }
+    if (mqttInfo) {
+      mqttInfo.textContent = data.mqtt_host ? 'MQTT: ' + data.mqtt_host + ':' + (data.mqtt_port || 1883) : 'MQTT: выкл';
+    }
+    if (eventsInfo) {
+      eventsInfo.textContent = 'Событий: ' + (data.event_count || 0);
+    }
+  } catch (err) {
+    console.error('Error loading alarm status:', err);
+  }
+}
+
+async function toggleAlarm() {
+  const url = alarmRunning ? '/api/alarm/stop' : '/api/alarm/start';
+  try {
+    await fetch(url, { method: 'POST' });
+    loadAlarmStatus();
+  } catch (err) {
+    console.error('Error toggling alarm:', err);
+  }
+}
+
+async function loadAlarmLog() {
+  try {
+    const resp = await fetch('/api/alarm/log?limit=100');
+    const data = await resp.json();
+    const container = document.getElementById('alarm-log');
+    if (!container) return;
+
+    if (!data || data.length === 0) {
+      container.innerHTML = '<div class="empty-msg">Нет событий</div>';
+      return;
+    }
+
+    let html = '<table><thead><tr><th>Время</th><th>Камера</th><th>Тип</th><th>Событие</th><th>Статус</th><th>Описание</th><th>IP</th></tr></thead><tbody>';
+    data.forEach(e => {
+      const time = new Date(e.time).toLocaleString('ru-RU');
+      html += '<tr>';
+      html += '<td>' + time + '</td>';
+      html += '<td>' + (e.serial_id || '-') + '</td>';
+      html += '<td>' + (e.type || '-') + '</td>';
+      html += '<td>' + (e.event || '-') + '</td>';
+      html += '<td class="alarm-status-' + (e.status === 'Start' ? 'start' : 'stop') + '">' + (e.status || '-') + '</td>';
+      html += '<td>' + (e.descrip || '-') + '</td>';
+      html += '<td>' + (e.address || '-') + '</td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  } catch (err) {
+    console.error('Error loading alarm log:', err);
+  }
+}
+
+async function clearAlarmLog() {
+  try {
+    await fetch('/api/alarm/clear', { method: 'POST' });
+    loadAlarmLog();
+  } catch (err) {
+    console.error('Error clearing alarm log:', err);
   }
 }

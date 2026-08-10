@@ -13,6 +13,7 @@
       <button class="nav-tab active" onclick="switchTab('cameras')">Камеры</button>
       <button class="nav-tab" onclick="switchTab('archive')">Архив</button>
       <button class="nav-tab" onclick="switchTab('monitoring')">Мониторинг</button>
+      <button class="nav-tab" onclick="switchTab('alarm')">Тревога</button>
       <button class="nav-tab" onclick="switchTab('settings')">Настройки</button>
     </div>
     <button class="theme-toggle" onclick="toggleTheme()" title="Переключить тему">◐</button>
@@ -152,6 +153,38 @@
         </div>
         <div class="card-body">
           <div id="monitoring-storage" class="storage-info"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-alarm" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <h3>Alarm Server</h3>
+          <div class="alarm-status-badge" id="alarm-status-badge">
+            <span class="led" id="alarm-led"></span>
+            <span id="alarm-status-text">Остановлен</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="alarm-controls">
+            <div class="alarm-info">
+              <span id="alarm-port-info"></span>
+              <span id="alarm-mqtt-info"></span>
+              <span id="alarm-events-info"></span>
+            </div>
+            <button class="btn btn-primary" id="alarm-toggle-btn" onclick="toggleAlarm()">Запустить</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card alarm-log-card">
+        <div class="card-header">
+          <h3>События</h3>
+          <button class="btn btn-sm" onclick="clearAlarmLog()">Очистить</button>
+        </div>
+        <div class="card-body">
+          <div id="alarm-log" class="alarm-log"></div>
         </div>
       </div>
     </section>

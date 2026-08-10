@@ -52,6 +52,13 @@ jobs:
         target_size_gb: 90
         go2rtc_config_path: /etc/go2rtc/go2rtc.yaml
         http_port: 8180
+        alarm_enabled: false
+        alarm_port: 15002
+        mqtt_host: ''
+        mqtt_port: 1883
+        mqtt_user: ''
+        mqtt_pass: ''
+        alarm_command: ''
         EOF
 
         cat > "${PKG}/etc/systemd/system/simple-nvr.service" <<'EOF'

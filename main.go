@@ -68,15 +68,23 @@ func main() {
 
 	recorder := NewRecorder(config)
 	storage := NewStorage(config)
-	api := NewAPI(config, recorder, storage)
+	alarm := NewAlarmServer(config)
+	api := NewAPI(config, recorder, storage, alarm)
 
 	go startScheduler(recorder)
+
+	if config.AlarmEnabled {
+		if err := alarm.Start(); err != nil {
+			log.Printf("Warning: failed to start alarm server: %v", err)
+		}
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
 		sig := <-sigCh
 		log.Printf("Received %v, shutting down...", sig)
+		alarm.Stop()
 		recorder.StopRecording()
 		os.Exit(0)
 	}()
@@ -117,6 +125,12 @@ func main() {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
+
+	mux.HandleFunc("/api/alarm/status", api.HandleAlarmStatus)
+	mux.HandleFunc("/api/alarm/start", api.HandleAlarmStart)
+	mux.HandleFunc("/api/alarm/stop", api.HandleAlarmStop)
+	mux.HandleFunc("/api/alarm/log", api.HandleAlarmLog)
+	mux.HandleFunc("/api/alarm/clear", api.HandleAlarmClear)
 
 	addr := fmt.Sprintf(":%d", config.HTTPPort)
 	log.Printf("Server starting on %s", addr)

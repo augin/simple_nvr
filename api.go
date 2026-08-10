@@ -18,13 +18,15 @@ type API struct {
 	config   *NVRConfig
 	recorder *Recorder
 	storage  *Storage
+	alarm    *AlarmServer
 }
 
-func NewAPI(config *NVRConfig, recorder *Recorder, storage *Storage) *API {
+func NewAPI(config *NVRConfig, recorder *Recorder, storage *Storage, alarm *AlarmServer) *API {
 	return &API{
 		config:   config,
 		recorder: recorder,
 		storage:  storage,
+		alarm:    alarm,
 	}
 }
 
@@ -431,4 +433,63 @@ func (a *API) HandleArchiveDelete(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+}
+
+func (a *API) HandleAlarmStatus(w http.ResponseWriter, r *http.Request) {
+	status := a.alarm.GetStatus()
+	status["alarm_enabled"] = a.config.AlarmEnabled
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(status)
+}
+
+func (a *API) HandleAlarmStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err := a.alarm.Start(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "started"})
+}
+
+func (a *API) HandleAlarmStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	a.alarm.Stop()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "stopped"})
+}
+
+func (a *API) HandleAlarmLog(w http.ResponseWriter, r *http.Request) {
+	limit := 100
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	log := a.alarm.GetLog(limit)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(log)
+}
+
+func (a *API) HandleAlarmClear(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	a.alarm.ClearLog()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "cleared"})
 }

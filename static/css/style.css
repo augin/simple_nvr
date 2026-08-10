@@ -578,6 +578,16 @@ body {
   box-shadow: 0 0 4px var(--danger);
 }
 
+.led-green {
+  background-color: var(--success);
+  box-shadow: 0 0 4px var(--success);
+}
+
+.led-off {
+  background-color: var(--text-muted);
+  box-shadow: none;
+}
+
 .recording-indicator {
   display: flex;
   align-items: center;
@@ -639,4 +649,76 @@ body {
   font-family: monospace;
   margin-top: 4px;
   word-break: break-all;
+}
+
+.alarm-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.alarm-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.alarm-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.alarm-log-card .card-body {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.alarm-log table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.alarm-log th {
+  padding: 8px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-bottom: 2px solid var(--border);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.alarm-log td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.alarm-log tr:hover td {
+  background-color: var(--bg-tertiary);
+}
+
+.alarm-status-start {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.alarm-status-stop {
+  color: var(--success);
+}
+
+.btn-danger {
+  background-color: var(--danger);
+  border-color: var(--danger);
+  color: #ffffff;
+}
+
+.btn-danger:hover {
+  background-color: #e05070;
+  border-color: #e05070;
 }
