@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -11,6 +12,8 @@ import (
 	"syscall"
 	"time"
 )
+
+var version = "dev"
 
 func findStaticDir() string {
 	exe, err := os.Executable()
@@ -131,6 +134,11 @@ func main() {
 	mux.HandleFunc("/api/alarm/stop", api.HandleAlarmStop)
 	mux.HandleFunc("/api/alarm/log", api.HandleAlarmLog)
 	mux.HandleFunc("/api/alarm/clear", api.HandleAlarmClear)
+
+	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"version": version})
+	})
 
 	addr := fmt.Sprintf(":%d", config.HTTPPort)
 	log.Printf("Server starting on %s", addr)

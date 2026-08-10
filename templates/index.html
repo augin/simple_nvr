@@ -8,7 +8,7 @@
 </head>
 <body>
   <nav class="nav">
-    <div class="nav-brand">Simple NVR</div>
+    <div class="nav-brand">Simple NVR <span class="version-pill" id="version-pill">dev</span></div>
     <div class="nav-tabs">
       <button class="nav-tab active" onclick="switchTab('cameras')">Камеры</button>
       <button class="nav-tab" onclick="switchTab('archive')">Архив</button>
@@ -161,19 +161,16 @@
       <div class="card">
         <div class="card-header">
           <h3>Alarm Server</h3>
-          <div class="alarm-status-badge" id="alarm-status-badge">
-            <span class="led" id="alarm-led"></span>
-            <span id="alarm-status-text">Остановлен</span>
-          </div>
+          <label class="toggle">
+            <input type="checkbox" id="alarm-toggle" onchange="toggleAlarm()">
+            <span class="toggle-slider"></span>
+          </label>
         </div>
         <div class="card-body">
-          <div class="alarm-controls">
-            <div class="alarm-info">
-              <span id="alarm-port-info"></span>
-              <span id="alarm-mqtt-info"></span>
-              <span id="alarm-events-info"></span>
-            </div>
-            <button class="btn btn-primary" id="alarm-toggle-btn" onclick="toggleAlarm()">Запустить</button>
+          <div class="alarm-info">
+            <span id="alarm-port-info"></span>
+            <span id="alarm-mqtt-info"></span>
+            <span id="alarm-events-info"></span>
           </div>
         </div>
       </div>

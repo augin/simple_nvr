@@ -11,6 +11,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadTheme();
   fetchCameras();
   fetchStatus();
+  fetchVersion();
   setInterval(fetchStatus, 5000);
   initVideoZoom('video-player');
   initVideoZoom('archive-video-player');
@@ -586,22 +587,13 @@ async function loadAlarmStatus() {
     const data = await resp.json();
     alarmRunning = data.running;
 
-    const led = document.getElementById('alarm-led');
-    const text = document.getElementById('alarm-status-text');
-    const btn = document.getElementById('alarm-toggle-btn');
+    const toggle = document.getElementById('alarm-toggle');
     const portInfo = document.getElementById('alarm-port-info');
     const mqttInfo = document.getElementById('alarm-mqtt-info');
     const eventsInfo = document.getElementById('alarm-events-info');
 
-    if (led) {
-      led.className = 'led ' + (data.running ? 'led-green' : 'led-off');
-    }
-    if (text) {
-      text.textContent = data.running ? 'Работает' : 'Остановлен';
-    }
-    if (btn) {
-      btn.textContent = data.running ? 'Остановить' : 'Запустить';
-      btn.className = 'btn ' + (data.running ? 'btn-danger' : 'btn-primary');
+    if (toggle) {
+      toggle.checked = data.running;
     }
     if (portInfo) {
       portInfo.textContent = 'Порт: ' + (data.port || 15002);
@@ -666,4 +658,15 @@ async function clearAlarmLog() {
   } catch (err) {
     console.error('Error clearing alarm log:', err);
   }
+}
+
+async function fetchVersion() {
+  try {
+    const resp = await fetch('/api/version');
+    const data = await resp.json();
+    const pill = document.getElementById('version-pill');
+    if (pill && data.version) {
+      pill.textContent = data.version;
+    }
+  } catch (err) {}
 }
