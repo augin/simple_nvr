@@ -147,7 +147,7 @@ jobs:
         echo "${{ secrets.APT_GPG_PRIVATE_KEY }}" | gpg --batch --import
 
         cd dists/stable/main/binary-amd64
-        apt-ftparchive packages ../../../pool/main/ > Packages
+        apt-ftparchive packages ../../../../pool/main/ > Packages
         gzip -k -f Packages
 
         cd /tmp/apt-repo
