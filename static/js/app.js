@@ -1,0 +1,569 @@
+let currentCamera = '';
+let currentPlaybackSpeed = 1;
+let currentConfig = {};
+let currentFile = '';
+let currentFolder = '';
+let archiveCamera = '';
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadTheme();
+  fetchCameras();
+  fetchStatus();
+  setInterval(fetchStatus, 5000);
+  initVideoZoom('video-player');
+  initVideoZoom('archive-video-player');
+});
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  document.querySelector(`.nav-tab[onclick="switchTab('${tab}')"]`).classList.add('active');
+
+  if (tab === 'settings') {
+    loadSettings();
+  }
+  if (tab === 'archive') {
+    fetchArchiveCameras();
+  }
+}
+
+function toggleTheme() {
+  const html = document.documentElement;
+  const isLight = html.classList.contains('light');
+  html.classList.toggle('light');
+  localStorage.setItem('theme', isLight ? 'dark' : 'light');
+}
+
+function loadTheme() {
+  const theme = localStorage.getItem('theme');
+  if (theme === 'light') {
+    document.documentElement.classList.add('light');
+  }
+}
+
+async function fetchCameras() {
+  try {
+    const resp = await fetch('/api/cameras');
+    const data = await resp.json();
+    const container = document.getElementById('camera-list');
+    container.innerHTML = '';
+
+    if (data.error) {
+      container.innerHTML = `<div class="error-msg">${data.error}</div>`;
+      return;
+    }
+
+    (data.cameras || []).forEach(camera => {
+      const btn = document.createElement('button');
+      btn.className = 'camera-btn';
+      btn.textContent = camera;
+      btn.onclick = () => selectCamera(camera);
+      container.appendChild(btn);
+    });
+
+    if (!data.cameras || data.cameras.length === 0) {
+      container.innerHTML = '<div class="empty-msg">Камеры не найдены</div>';
+    }
+  } catch (err) {
+    console.error('Error fetching cameras:', err);
+    document.getElementById('camera-list').innerHTML = `<div class="error-msg">${err.message}</div>`;
+  }
+}
+
+function selectCamera(camera) {
+  currentCamera = camera;
+  document.getElementById('current-camera').textContent = camera;
+
+  document.querySelectorAll('.camera-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.textContent === camera);
+  });
+
+  fetchFiles(camera);
+}
+
+async function fetchFiles(camera) {
+  try {
+    const resp = await fetch(`/api/files?camera=${encodeURIComponent(camera)}`);
+    const data = await resp.json();
+    renderFileTree(data);
+  } catch (err) {
+    console.error('Error fetching files:', err);
+  }
+}
+
+function renderFileTree(data) {
+  const container = document.getElementById('file-tree');
+  container.innerHTML = '';
+
+  const ul = document.createElement('ul');
+
+  const folders = Object.keys(data).sort().reverse();
+
+  folders.forEach((folder, idx) => {
+    const li = document.createElement('li');
+    const folderSpan = document.createElement('span');
+    folderSpan.className = 'folder';
+    folderSpan.textContent = folder;
+    li.appendChild(folderSpan);
+
+    const fileUl = document.createElement('ul');
+    fileUl.className = idx > 0 ? 'collapsed' : '';
+
+    const files = data[folder] || [];
+    files.sort().reverse().forEach(file => {
+      const fileLi = document.createElement('li');
+      fileLi.className = 'file';
+      fileLi.textContent = file.replace('.mp4', '');
+      fileLi.onclick = (e) => {
+        e.stopPropagation();
+        playFile(folder, file);
+        document.querySelectorAll('.file-tree .file').forEach(el => el.classList.remove('active'));
+        fileLi.classList.add('active');
+      };
+      fileUl.appendChild(fileLi);
+    });
+
+    li.appendChild(fileUl);
+    ul.appendChild(li);
+
+    folderSpan.onclick = () => {
+      fileUl.classList.toggle('collapsed');
+    };
+  });
+
+  container.appendChild(ul);
+
+  const files = container.querySelectorAll('.file');
+  if (files.length > 1) {
+    files[1].click();
+  } else if (files.length === 1) {
+    files[0].click();
+  }
+}
+
+function parseFileNameTime(file) {
+  const name = file.replace('.mp4', '');
+  const parts = name.split('-');
+  if (parts.length >= 2) {
+    const h = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10);
+    if (!isNaN(h) && !isNaN(m)) {
+      return h * 3600 + m * 60;
+    }
+  }
+  return 0;
+}
+
+function playFile(folder, file) {
+  currentFolder = folder;
+  currentFile = file;
+  const video = document.getElementById('video-player');
+  const path = `/api/video/${currentCamera}/${folder}/${file}`;
+  video.src = path;
+  video.load();
+  video.onloadedmetadata = () => {
+    video.playbackRate = currentPlaybackSpeed;
+    video.play();
+    const fileStartSec = parseFileNameTime(file);
+    document.getElementById('dl-from').value = formatDuration(fileStartSec);
+    document.getElementById('dl-to').value = formatDuration(fileStartSec + video.duration);
+  };
+}
+
+function formatDuration(seconds) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  return [h, m, s].map(v => String(v).padStart(2, '0')).join(':');
+}
+
+function parseTime(str) {
+  const [h, m, s] = str.split(':').map(Number);
+  return h * 3600 + m * 60 + s;
+}
+
+async function downloadClip() {
+  if (!currentCamera || !currentFile) return;
+  const fileStartSec = parseFileNameTime(currentFile);
+  const from = parseTime(document.getElementById('dl-from').value) - fileStartSec;
+  const to = parseTime(document.getElementById('dl-to').value) - fileStartSec;
+  if (to <= from || from < 0) return;
+  const url = `/api/download?camera=${encodeURIComponent(currentCamera)}&folder=${encodeURIComponent(currentFolder)}&file=${encodeURIComponent(currentFile)}&start=${from}&end=${to}`;
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+function setSpeed(speed) {
+  currentPlaybackSpeed = speed;
+  const video = document.getElementById('video-player');
+  video.playbackRate = speed;
+
+  document.querySelectorAll('.speed-controls .btn').forEach(btn => {
+    btn.classList.toggle('active', parseInt(btn.dataset.speed) === speed);
+  });
+}
+
+async function fetchArchiveCameras() {
+  try {
+    const resp = await fetch('/api/cameras');
+    const data = await resp.json();
+    const container = document.getElementById('archive-camera-list');
+    container.innerHTML = '';
+
+    const cameras = data.cameras || [];
+    if (cameras.length === 0) {
+      container.innerHTML = '<div class="empty-msg">Камеры не найдены</div>';
+      return;
+    }
+
+    const checks = cameras.map(async (camera) => {
+      try {
+        const r = await fetch(`/api/archive?camera=${encodeURIComponent(camera)}`);
+        const d = await r.json();
+        if (Object.keys(d).length > 0) return camera;
+      } catch (e) {}
+      return null;
+    });
+
+    const active = (await Promise.all(checks)).filter(Boolean);
+
+    if (active.length === 0) {
+      container.innerHTML = '<div class="empty-msg">Архив пуст</div>';
+      return;
+    }
+
+    active.forEach(camera => {
+      const btn = document.createElement('button');
+      btn.className = 'camera-btn';
+      btn.textContent = camera;
+      btn.onclick = () => selectArchiveCamera(camera);
+      container.appendChild(btn);
+    });
+  } catch (err) {
+    console.error('Error fetching archive cameras:', err);
+  }
+}
+
+function selectArchiveCamera(camera) {
+  archiveCamera = camera;
+  document.getElementById('archive-current-camera').textContent = camera;
+  document.querySelectorAll('#archive-camera-list .camera-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.textContent === camera);
+  });
+  fetchArchiveFiles(camera);
+}
+
+async function fetchArchiveFiles(camera) {
+  try {
+    const resp = await fetch(`/api/archive?camera=${encodeURIComponent(camera)}`);
+    const data = await resp.json();
+    renderArchiveFileTree(data);
+  } catch (err) {
+    console.error('Error fetching archive files:', err);
+  }
+}
+
+function renderArchiveFileTree(data) {
+  const container = document.getElementById('archive-file-tree');
+  container.innerHTML = '';
+
+  const ul = document.createElement('ul');
+  const folders = Object.keys(data).sort().reverse();
+
+  folders.forEach((folder, idx) => {
+    const li = document.createElement('li');
+    const folderSpan = document.createElement('span');
+    folderSpan.className = 'folder';
+    folderSpan.textContent = folder;
+    li.appendChild(folderSpan);
+
+    const fileUl = document.createElement('ul');
+    fileUl.className = idx > 0 ? 'collapsed' : '';
+
+    const files = data[folder] || [];
+    files.sort().reverse().forEach(file => {
+      const fileLi = document.createElement('li');
+      fileLi.className = 'file';
+
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = file.replace('.mp4', '');
+      nameSpan.style.cursor = 'pointer';
+      nameSpan.onclick = (e) => {
+        e.stopPropagation();
+        playArchiveFile(folder, file);
+        document.querySelectorAll('#archive-file-tree .file').forEach(el => el.classList.remove('active'));
+        fileLi.classList.add('active');
+      };
+
+      const delBtn = document.createElement('button');
+      delBtn.className = 'btn-icon';
+      delBtn.textContent = '✕';
+      delBtn.title = 'Удалить';
+      delBtn.onclick = (e) => {
+        e.stopPropagation();
+        deleteArchiveFile(folder, file, fileLi);
+      };
+
+      fileLi.appendChild(nameSpan);
+      fileLi.appendChild(delBtn);
+      fileUl.appendChild(fileLi);
+    });
+
+    li.appendChild(fileUl);
+    ul.appendChild(li);
+    folderSpan.onclick = () => {
+      fileUl.classList.toggle('collapsed');
+    };
+  });
+
+  container.appendChild(ul);
+}
+
+function playArchiveFile(folder, file) {
+  const video = document.getElementById('archive-video-player');
+  const path = `/api/archive/video/${archiveCamera}/${folder}/${file}`;
+  video.src = path;
+  video.load();
+  video.onloadedmetadata = () => {
+    video.playbackRate = currentPlaybackSpeed;
+    video.play();
+  };
+}
+
+async function deleteArchiveFile(folder, file, element) {
+  if (!confirm('Удалить файл?')) return;
+  try {
+    const resp = await fetch(`/api/archive/delete?camera=${encodeURIComponent(archiveCamera)}&folder=${encodeURIComponent(folder)}&file=${encodeURIComponent(file)}`, { method: 'POST' });
+    if (resp.ok) {
+      const li = element;
+      const ul = li.parentElement;
+      li.remove();
+      if (ul && ul.children.length === 0) {
+        ul.parentElement.remove();
+      }
+    }
+  } catch (err) {
+    console.error('Delete error:', err);
+  }
+}
+
+function setArchiveSpeed(speed) {
+  const video = document.getElementById('archive-video-player');
+  video.playbackRate = speed;
+  document.querySelectorAll('#tab-archive .speed-controls .btn').forEach(btn => {
+    btn.classList.toggle('active', parseInt(btn.dataset.speed) === speed);
+  });
+}
+
+const video = document.getElementById('video-player');
+if (video) {
+  video.addEventListener('ended', () => {
+    const active = document.querySelector('.file-tree .file.active');
+    if (active) {
+      const prev = active.previousElementSibling;
+      if (prev && prev.classList.contains('file')) {
+        prev.click();
+      } else {
+        const prevFolder = active.closest('ul')?.parentElement?.previousElementSibling;
+        if (prevFolder) {
+          const files = prevFolder.querySelectorAll('.file');
+          if (files.length) files[files.length - 1].click();
+        }
+      }
+    }
+  });
+}
+
+function initVideoZoom(videoId) {
+  const wrapper = document.getElementById(videoId)?.closest('.video-wrapper');
+  if (!wrapper) return;
+  const video = wrapper.querySelector('video');
+
+  let zoom = 1;
+  let panX = 0;
+  let panY = 0;
+  let dragging = false;
+  let lastX = 0;
+  let lastY = 0;
+
+  function applyTransform() {
+    if (zoom <= 1) {
+      video.style.transform = '';
+      video.classList.remove('zoomed');
+    } else {
+      video.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+      video.classList.add('zoomed');
+    }
+  }
+
+  function clampPan() {
+    if (zoom <= 1) { panX = 0; panY = 0; return; }
+    const vw = wrapper.clientWidth;
+    const vh = wrapper.clientHeight;
+    const maxX = (zoom - 1) * vw / 2;
+    const maxY = (zoom - 1) * vh / 2;
+    panX = Math.max(-maxX, Math.min(maxX, panX));
+    panY = Math.max(-maxY, Math.min(maxY, panY));
+  }
+
+  wrapper.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const rect = wrapper.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    const centerX = wrapper.clientWidth / 2;
+    const centerY = wrapper.clientHeight / 2;
+
+    const prevZoom = zoom;
+    if (e.deltaY < 0) {
+      zoom = Math.min(10, zoom * 1.15);
+    } else {
+      zoom = Math.max(1, zoom / 1.15);
+    }
+
+    const ratio = zoom / prevZoom;
+    panX = (cx - centerX) * (1 - ratio) + panX * ratio;
+    panY = (cy - centerY) * (1 - ratio) + panY * ratio;
+
+    clampPan();
+    applyTransform();
+  }, { passive: false });
+
+  wrapper.addEventListener('mousedown', (e) => {
+    if (zoom <= 1 || e.button !== 0) return;
+    dragging = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    video.classList.add('dragging');
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    panX += e.clientX - lastX;
+    panY += e.clientY - lastY;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    clampPan();
+    applyTransform();
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    video.classList.remove('dragging');
+  });
+
+  wrapper.addEventListener('dblclick', (e) => {
+    e.preventDefault();
+    zoom = 1;
+    panX = 0;
+    panY = 0;
+    applyTransform();
+  });
+}
+
+async function fetchStatus() {
+  try {
+    const resp = await fetch('/api/status');
+    const data = await resp.json();
+
+    const indicator = document.getElementById('recording-indicator');
+    if (indicator) {
+      indicator.style.display = data.recording ? 'flex' : 'none';
+    }
+
+    const mIndicator = document.getElementById('monitoring-indicator');
+    if (mIndicator) {
+      mIndicator.style.display = data.recording ? 'flex' : 'none';
+    }
+
+    if (data.storage) {
+      const storageEl = document.getElementById('storage-info');
+      if (storageEl) {
+        storageEl.innerHTML = `
+          <div>Размер: <span class="value">${data.storage.total_size_gb.toFixed(2)} ГБ</span> / <span class="value">${data.storage.target_size_gb} ГБ</span></div>
+          <div>Файлов: <span class="value">${data.storage.file_count}</span></div>
+        `;
+      }
+      const mStorageEl = document.getElementById('monitoring-storage');
+      if (mStorageEl) {
+        mStorageEl.innerHTML = `
+          <div>Размер: <span class="value">${data.storage.total_size_gb.toFixed(2)} ГБ</span> / <span class="value">${data.storage.target_size_gb} ГБ</span></div>
+          <div>Файлов: <span class="value">${data.storage.file_count}</span></div>
+          <div>Директория: <span class="value">${data.storage.base_dir}</span></div>
+        `;
+      }
+    }
+
+    const procEl = document.getElementById('monitoring-processes');
+    if (procEl) {
+      const procs = data.processes || [];
+      if (procs.length === 0) {
+        procEl.innerHTML = '<div class="empty-msg">Нет активных процессов записи</div>';
+      } else {
+        procEl.innerHTML = procs.map(p => `
+          <div class="process-item">
+            <div>
+              <div class="process-header">
+                <span class="process-name">${p.name}</span>
+                <span class="process-meta">${p.startTime}</span>
+                <span class="led led-red"></span>
+              </div>
+              <div class="process-output">${p.output}</div>
+            </div>
+          </div>
+        `).join('');
+      }
+    }
+  } catch (err) {
+    console.error('Error fetching status:', err);
+  }
+}
+
+async function loadSettings() {
+  try {
+    const resp = await fetch('/api/config');
+    const cfg = await resp.json();
+    currentConfig = cfg;
+
+    document.getElementById('base_dir').value = cfg.base_dir || '';
+    document.getElementById('archive_dir').value = cfg.archive_dir || '';
+    document.getElementById('stream_server').value = cfg.stream_server || '';
+    document.getElementById('target_size_gb').value = cfg.target_size_gb || 90;
+    document.getElementById('go2rtc_config_path').value = cfg.go2rtc_config_path || '';
+    document.getElementById('http_port').value = cfg.http_port || 8180;
+  } catch (err) {
+    console.error('Error loading settings:', err);
+  }
+}
+
+async function saveSettings(e) {
+  e.preventDefault();
+
+  const cfg = {
+    base_dir: document.getElementById('base_dir').value,
+    archive_dir: document.getElementById('archive_dir').value,
+    stream_server: document.getElementById('stream_server').value,
+    target_size_gb: parseInt(document.getElementById('target_size_gb').value),
+    go2rtc_config_path: document.getElementById('go2rtc_config_path').value,
+    http_port: parseInt(document.getElementById('http_port').value),
+  };
+
+  try {
+    await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cfg),
+    });
+    alert('Настройки сохранены');
+  } catch (err) {
+    console.error('Error saving settings:', err);
+    alert('Ошибка сохранения');
+  }
+}
