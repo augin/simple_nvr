@@ -1,0 +1,171 @@
+name: Build and Release Deb Package
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-deb:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.22'
+
+    - name: Get version
+      id: version
+      run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+    - name: Build binary
+      run: CGO_ENABLED=0 go build -ldflags="-s -w" -o nvr .
+
+    - name: Build deb package
+      run: |
+        VERSION=${{ steps.version.outputs.version }}
+        PKG="simple-nvr_${VERSION}_amd64"
+        mkdir -p "${PKG}/DEBIAN" "${PKG}/usr/local/bin"
+        mkdir -p "${PKG}/opt/simple-nvr/templates"
+        mkdir -p "${PKG}/opt/simple-nvr/static/css"
+        mkdir -p "${PKG}/opt/simple-nvr/static/js"
+
+        cp nvr "${PKG}/usr/local/bin/simple-nvr"
+        chmod 755 "${PKG}/usr/local/bin/simple-nvr"
+
+        cp nvr "${PKG}/opt/simple-nvr/nvr"
+        cp templates/index.html "${PKG}/opt/simple-nvr/templates/"
+        cp static/css/style.css "${PKG}/opt/simple-nvr/static/css/"
+        cp static/js/app.js "${PKG}/opt/simple-nvr/static/js/"
+
+        mkdir -p "${PKG}/etc/systemd/system"
+        cat > "${PKG}/etc/systemd/system/simple-nvr.service" <<'EOF'
+        [Unit]
+        Description=Simple NVR
+        After=network.target
+
+        [Service]
+        Type=simple
+        User=root
+        WorkingDirectory=/opt/simple-nvr
+        ExecStart=/usr/local/bin/simple-nvr --config /opt/simple-nvr/nvr.yaml
+        Restart=on-failure
+        RestartSec=5
+        TimeoutStopSec=20
+        KillMode=mixed
+
+        [Install]
+        WantedBy=multi-user.target
+        EOF
+
+        cat > "${PKG}/DEBIAN/control" <<EOF
+        Package: simple-nvr
+        Version: ${VERSION}
+        Architecture: amd64
+        Maintainer: Augin <hello@augin.ru>
+        Depends: ffmpeg
+        Section: video
+        Priority: optional
+        Homepage: https://github.com/augin/simple_nvr
+        Description: Simple NVR
+         Lightweight network video recorder.
+         Records RTSP streams via go2rtc, stores 10-minute segments,
+         automatic disk cleanup, web UI with video player and archive.
+        EOF
+
+        cat > "${PKG}/opt/simple-nvr/nvr.yaml" <<'EOF'
+        base_dir: '/var/lib/simple-nvr/recordings'
+        archive_dir: '/var/lib/simple-nvr/archive'
+        stream_server: 'rtsp://127.0.0.1:8554'
+        target_size_gb: 90
+        go2rtc_config_path: /etc/go2rtc/go2rtc.yaml
+        http_port: 8180
+        EOF
+
+        cat > "${PKG}/DEBIAN/postinst" <<'EOF'
+        #!/bin/bash
+        set -e
+        case "$1" in
+          configure)
+            mkdir -p /var/lib/simple-nvr/recordings
+            mkdir -p /var/lib/simple-nvr/archive
+            systemctl daemon-reload || true
+            systemctl enable simple-nvr || true
+            systemctl restart simple-nvr || true
+            ;;
+        esac
+        EOF
+        chmod 755 "${PKG}/DEBIAN/postinst"
+
+        cat > "${PKG}/DEBIAN/prerm" <<'EOF'
+        #!/bin/bash
+        set -e
+        case "$1" in
+          remove|upgrade|deconfigure)
+            systemctl stop simple-nvr || true
+            systemctl disable simple-nvr || true
+            ;;
+        esac
+        EOF
+        chmod 755 "${PKG}/DEBIAN/prerm"
+
+        cat > "${PKG}/DEBIAN/postrm" <<'EOF'
+        #!/bin/bash
+        set -e
+        case "$1" in
+          purge|remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+            systemctl daemon-reload || true
+            ;;
+        esac
+        EOF
+        chmod 755 "${PKG}/DEBIAN/postrm"
+
+        dpkg-deb --root-owner-group --build "${PKG}"
+        echo "deb_file=${PKG}.deb" >> "$GITHUB_ENV"
+
+    - name: Upload deb to release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: ${{ env.deb_file }}
+
+    - name: Deploy to apt repo
+      run: |
+        set -e
+        VERSION="${{ steps.version.outputs.version }}"
+        DEB="${{ env.deb_file }}"
+
+        git clone https://x-access-token:${{ secrets.APT_REPO_TOKEN }}@github.com/augin/augin.github.io.git /tmp/apt-repo
+        cd /tmp/apt-repo
+
+        cp "${{ github.workspace }}/${DEB}" pool/main/
+
+        echo "${{ secrets.APT_GPG_PRIVATE_KEY }}" | gpg --batch --import
+
+        cd dists/stable/main/binary-amd64
+        apt-ftparchive packages ../../../pool/main/ > Packages
+        gzip -k -f Packages
+
+        cd /tmp/apt-repo
+        apt-ftparchive release dists/stable > dists/stable/Release
+
+        gpg --batch --yes --armor --detach-sign \
+          --default-key ${{ secrets.APT_GPG_KEY_ID }} \
+          -o dists/stable/Release.gpg dists/stable/Release
+
+        gpg --batch --yes --armor --clearsign \
+          --default-key ${{ secrets.APT_GPG_KEY_ID }} \
+          -o dists/stable/InRelease dists/stable/Release
+
+        gpg --armor --export ${{ secrets.APT_GPG_KEY_ID }} > signing-key.asc
+        gpg --export ${{ secrets.APT_GPG_KEY_ID }} > signing-key.gpg
+
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add -A
+        git diff --cached --quiet || git commit -m "Add simple-nvr ${VERSION}"
+        git push
