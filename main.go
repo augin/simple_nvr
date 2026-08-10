@@ -7,13 +7,52 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 )
 
+func findStaticDir() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "."
+	}
+	dir := filepath.Dir(exe)
+	if _, err := os.Stat(filepath.Join(dir, "templates", "index.html")); err == nil {
+		return dir
+	}
+	if _, err := os.Stat(filepath.Join(dir, "..", "templates", "index.html")); err == nil {
+		return filepath.Join(dir, "..")
+	}
+	return "."
+}
+
+func findConfig() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "/etc/simple-nvr/nvr.yaml"
+	}
+	dir := filepath.Dir(exe)
+	if _, err := os.Stat(filepath.Join(dir, "nvr.yaml")); err == nil {
+		return filepath.Join(dir, "nvr.yaml")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "..", "nvr.yaml")); err == nil {
+		return filepath.Join(dir, "..", "nvr.yaml")
+	}
+	return "/etc/simple-nvr/nvr.yaml"
+}
+
 func main() {
-	configPath := flag.String("config", "nvr.yaml", "path to config file")
+	configPath := flag.String("config", "", "path to config file")
+	staticDir := flag.String("static-dir", "", "path to static files directory")
 	flag.Parse()
+
+	if *staticDir == "" {
+		*staticDir = findStaticDir()
+	}
+	if *configPath == "" {
+		*configPath = findConfig()
+	}
 
 	config, err := loadNVRConfig(*configPath)
 	if err != nil {
@@ -21,6 +60,8 @@ func main() {
 	}
 
 	log.Printf("Simple NVR starting...")
+	log.Printf("Config: %s", *configPath)
+	log.Printf("Static: %s", *staticDir)
 	log.Printf("Base dir: %s", config.BaseDir)
 	log.Printf("Stream server: %s", config.StreamServer)
 	log.Printf("Target size: %d GB", config.TargetSizeGB)
@@ -40,6 +81,9 @@ func main() {
 		os.Exit(0)
 	}()
 
+	templatePath := filepath.Join(*staticDir, "templates", "index.html")
+	staticPath := filepath.Join(*staticDir, "static")
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -48,10 +92,10 @@ func main() {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		http.ServeFile(w, r, "templates/index.html")
+		http.ServeFile(w, r, templatePath)
 	})
 
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticPath))))
 
 	mux.HandleFunc("/api/cameras", api.HandleCameras)
 	mux.HandleFunc("/api/files", api.HandleFiles)

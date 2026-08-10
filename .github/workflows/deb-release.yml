@@ -30,20 +30,30 @@ jobs:
       run: |
         VERSION=${{ steps.version.outputs.version }}
         PKG="simple-nvr_${VERSION}_amd64"
-        mkdir -p "${PKG}/DEBIAN" "${PKG}/usr/local/bin"
-        mkdir -p "${PKG}/opt/simple-nvr/templates"
-        mkdir -p "${PKG}/opt/simple-nvr/static/css"
-        mkdir -p "${PKG}/opt/simple-nvr/static/js"
-
-        cp nvr "${PKG}/usr/local/bin/simple-nvr"
-        chmod 755 "${PKG}/usr/local/bin/simple-nvr"
-
-        cp nvr "${PKG}/opt/simple-nvr/nvr"
-        cp templates/index.html "${PKG}/opt/simple-nvr/templates/"
-        cp static/css/style.css "${PKG}/opt/simple-nvr/static/css/"
-        cp static/js/app.js "${PKG}/opt/simple-nvr/static/js/"
-
+        mkdir -p "${PKG}/DEBIAN"
+        mkdir -p "${PKG}/usr/bin"
+        mkdir -p "${PKG}/etc/simple-nvr"
+        mkdir -p "${PKG}/usr/share/simple-nvr/templates"
+        mkdir -p "${PKG}/usr/share/simple-nvr/static/css"
+        mkdir -p "${PKG}/usr/share/simple-nvr/static/js"
         mkdir -p "${PKG}/etc/systemd/system"
+
+        cp nvr "${PKG}/usr/bin/simple-nvr"
+        chmod 755 "${PKG}/usr/bin/simple-nvr"
+
+        cp templates/index.html "${PKG}/usr/share/simple-nvr/templates/"
+        cp static/css/style.css "${PKG}/usr/share/simple-nvr/static/css/"
+        cp static/js/app.js "${PKG}/usr/share/simple-nvr/static/js/"
+
+        cat > "${PKG}/etc/simple-nvr/nvr.yaml" <<'EOF'
+        base_dir: '/var/lib/simple-nvr/recordings'
+        archive_dir: '/var/lib/simple-nvr/archive'
+        stream_server: 'rtsp://127.0.0.1:8554'
+        target_size_gb: 90
+        go2rtc_config_path: /etc/go2rtc/go2rtc.yaml
+        http_port: 8180
+        EOF
+
         cat > "${PKG}/etc/systemd/system/simple-nvr.service" <<'EOF'
         [Unit]
         Description=Simple NVR
@@ -52,8 +62,7 @@ jobs:
         [Service]
         Type=simple
         User=root
-        WorkingDirectory=/opt/simple-nvr
-        ExecStart=/usr/local/bin/simple-nvr --config /opt/simple-nvr/nvr.yaml
+        ExecStart=/usr/bin/simple-nvr --config /etc/simple-nvr/nvr.yaml --static-dir /usr/share/simple-nvr
         Restart=on-failure
         RestartSec=5
         TimeoutStopSec=20
@@ -78,13 +87,9 @@ jobs:
          automatic disk cleanup, web UI with video player and archive.
         EOF
 
-        cat > "${PKG}/opt/simple-nvr/nvr.yaml" <<'EOF'
-        base_dir: '/var/lib/simple-nvr/recordings'
-        archive_dir: '/var/lib/simple-nvr/archive'
-        stream_server: 'rtsp://127.0.0.1:8554'
-        target_size_gb: 90
-        go2rtc_config_path: /etc/go2rtc/go2rtc.yaml
-        http_port: 8180
+        cat > "${PKG}/DEBIAN/conffiles" <<'EOF'
+        /etc/simple-nvr/nvr.yaml
+        /etc/systemd/system/simple-nvr.service
         EOF
 
         cat > "${PKG}/DEBIAN/postinst" <<'EOF'
@@ -94,6 +99,7 @@ jobs:
           configure)
             mkdir -p /var/lib/simple-nvr/recordings
             mkdir -p /var/lib/simple-nvr/archive
+            chown -R root:root /var/lib/simple-nvr
             systemctl daemon-reload || true
             systemctl enable simple-nvr || true
             systemctl restart simple-nvr || true

@@ -8,10 +8,9 @@ RUN CGO_ENABLED=0 go build -o /nvr .
 FROM alpine:latest
 RUN apk add --no-cache ffmpeg tzdata
 ENV TZ=Europe/Moscow
-COPY --from=builder /nvr /usr/local/bin/nvr
-COPY templates/ /app/templates/
-COPY static/ /app/static/
+COPY --from=builder /nvr /usr/bin/simple-nvr
+COPY templates/ /usr/share/simple-nvr/templates/
+COPY static/ /usr/share/simple-nvr/static/
 EXPOSE 8180
-VOLUME /config
-WORKDIR /app
-CMD ["nvr", "--config", "/config/nvr.yaml"]
+VOLUME /etc/simple-nvr
+CMD ["simple-nvr", "--config", "/etc/simple-nvr/nvr.yaml", "--static-dir", "/usr/share/simple-nvr"]

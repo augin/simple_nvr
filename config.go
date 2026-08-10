@@ -22,7 +22,12 @@ type Go2RTCConfig struct {
 
 func loadNVRConfig(path string) (*NVRConfig, error) {
 	data, err := os.ReadFile(path)
-	if err != nil {
+	if err != nil && path != "/etc/simple-nvr/nvr.yaml" {
+		data, err = os.ReadFile("/etc/simple-nvr/nvr.yaml")
+		if err != nil {
+			return nil, err
+		}
+	} else if err != nil {
 		return nil, err
 	}
 	var cfg NVRConfig

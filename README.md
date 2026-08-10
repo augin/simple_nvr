@@ -26,7 +26,22 @@
 
 ## Установка
 
-### Сборка
+### APT (Debian/Ubuntu)
+
+```bash
+curl -fsSL https://deb.augin.ru/signing-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/augin.gpg
+echo "deb [signed-by=/usr/share/keyrings/augin.gpg] https://deb.augin.ru/ stable main" | sudo tee /etc/apt/sources.list.d/augin.list
+sudo apt update
+sudo apt install simple-nvr
+```
+
+Пакет устанавливает:
+- Бинарник: `/usr/bin/simple-nvr`
+- Конфиг: `/etc/simple-nvr/nvr.yaml`
+- Статика: `/usr/share/simple-nvr/`
+- Данные: `/var/lib/simple-nvr/`
+
+### Сборка из исходников
 
 ```bash
 go build -o nvr .
@@ -34,24 +49,28 @@ go build -o nvr .
 
 ### Конфигурация
 
-Создайте файл `nvr.yaml`:
+Создайте файл `/etc/simple-nvr/nvr.yaml`:
 
 ```yaml
-base_dir: '/mnt/video'           # Директория хранения записей
-archive_dir: '/mnt/archive'       # Директория архива (по умолчанию: base_dir/archive)
-stream_server: 'rtsp://127.0.0.1:8554'  # Адрес go2rtc
-target_size_gb: 90                # Лимит диска (ГБ)
-go2rtc_config_path: /opt/go2rtc/go2rtc.yaml  # Путь к конфигу go2rtc
-http_port: 8180                   # Порт веб-интерфейса (по умолчанию 8180)
+base_dir: '/var/lib/simple-nvr/recordings'
+archive_dir: '/var/lib/simple-nvr/archive'
+stream_server: 'rtsp://127.0.0.1:8554'
+target_size_gb: 90
+go2rtc_config_path: /etc/go2rtc/go2rtc.yaml
+http_port: 8180
 ```
 
 ### Запуск
 
 ```bash
-./nvr --config nvr.yaml
+simple-nvr --config /etc/simple-nvr/nvr.yaml --static-dir /usr/share/simple-nvr
 ```
 
+При запуске без флагов бинарник автоматически ищет конфиг в `/etc/simple-nvr/nvr.yaml`, а статику рядом с собой.
+
 ### Systemd-сервис
+
+При установке через APT сервис создаётся автоматически. Для ручной настройки:
 
 ```ini
 [Unit]
@@ -61,8 +80,7 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/opt/simple_nvr
-ExecStart=/opt/simple_nvr/nvr --config /opt/simple_nvr/nvr.yaml
+ExecStart=/usr/bin/simple-nvr --config /etc/simple-nvr/nvr.yaml --static-dir /usr/share/simple-nvr
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20
@@ -79,9 +97,9 @@ docker build -t simple-nvr .
 docker run -d \
   --name simple-nvr \
   -p 8180:8180 \
-  -v /path/to/config:/config \
-  -v /path/to/video:/mnt/video \
-  -v /path/to/go2rtc:/opt/go2rtc \
+  -v /path/to/config:/etc/simple-nvr \
+  -v /path/to/video:/var/lib/simple-nvr/recordings \
+  -v /path/to/go2rtc:/etc/go2rtc \
   simple-nvr
 ```
 
