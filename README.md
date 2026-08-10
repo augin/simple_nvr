@@ -103,7 +103,7 @@ docker run -d \
 
 ```
 <archive_dir>/
-  kalitka/
+  <camera_name>/
     2026/
       08/
         10/
