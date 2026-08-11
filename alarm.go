@@ -332,6 +332,7 @@ func (s *AlarmServer) GetStatus() map[string]any {
 		"mqtt":        mqttConnected,
 		"mqtt_host":   s.config.MQTTHost,
 		"event_count": len(s.log),
+		"enabled":     s.config.AlarmEnabled,
 	}
 }
 

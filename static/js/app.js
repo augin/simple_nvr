@@ -593,7 +593,7 @@ async function loadAlarmStatus() {
     const eventsInfo = document.getElementById('alarm-events-info');
 
     if (toggle) {
-      toggle.checked = data.running;
+      toggle.checked = data.enabled;
     }
     if (portInfo) {
       portInfo.textContent = 'Порт: ' + (data.port || 15002);
@@ -610,11 +610,14 @@ async function loadAlarmStatus() {
 }
 
 async function toggleAlarm() {
-  const url = alarmRunning ? '/api/alarm/stop' : '/api/alarm/start';
+  const toggle = document.getElementById('alarm-toggle');
+  const enabled = toggle.checked;
+  const url = enabled ? '/api/alarm/start' : '/api/alarm/stop';
   try {
     await fetch(url, { method: 'POST' });
     loadAlarmStatus();
   } catch (err) {
+    toggle.checked = !enabled;
     console.error('Error toggling alarm:', err);
   }
 }

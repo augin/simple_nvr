@@ -472,6 +472,9 @@ func (a *API) HandleAlarmStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	a.config.AlarmEnabled = true
+	saveNVRConfig(a.configPath, a.config)
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "started"})
 }
@@ -483,6 +486,9 @@ func (a *API) HandleAlarmStop(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.alarm.Stop()
+
+	a.config.AlarmEnabled = false
+	saveNVRConfig(a.configPath, a.config)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "stopped"})
