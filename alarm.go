@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -464,7 +465,10 @@ func decodeAddress(raw any) string {
 	if hexStr == "" {
 		return ""
 	}
-	var addr uint32
-	fmt.Sscanf(hexStr, "%x", &addr)
-	return net.IPv4(byte(addr>>24), byte(addr>>16), byte(addr>>8), byte(addr)).String()
+	cleaned := strings.TrimPrefix(strings.TrimPrefix(hexStr, "0X"), "0x")
+	addr, err := strconv.ParseUint(cleaned, 16, 32)
+	if err != nil {
+		return ""
+	}
+	return net.IPv4(byte(addr), byte(addr>>8), byte(addr>>16), byte(addr>>24)).String()
 }

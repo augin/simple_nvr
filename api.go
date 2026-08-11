@@ -507,6 +507,33 @@ func (a *API) HandleAlarmLog(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(log)
 }
 
+func (a *API) HandleAlarmsRange(w http.ResponseWriter, r *http.Request) {
+	camera := r.URL.Query().Get("camera")
+	date := r.URL.Query().Get("date")
+	if camera == "" || date == "" {
+		http.Error(w, "camera and date required", http.StatusBadRequest)
+		return
+	}
+
+	filePath := filepath.Join(alarmDir, date+".jsonl")
+	events, err := readEventsFile(filePath)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]AlarmEvent{})
+		return
+	}
+
+	filtered := make([]AlarmEvent, 0)
+	for _, e := range events {
+		if e.Camera == camera {
+			filtered = append(filtered, e)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(filtered)
+}
+
 func (a *API) HandleAlarmClear(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

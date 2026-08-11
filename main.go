@@ -143,6 +143,7 @@ func main() {
 	mux.HandleFunc("/api/alarm/stop", api.HandleAlarmStop)
 	mux.HandleFunc("/api/alarm/log", api.HandleAlarmLog)
 	mux.HandleFunc("/api/alarm/clear", api.HandleAlarmClear)
+	mux.HandleFunc("/api/alarms/range", api.HandleAlarmsRange)
 
 	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

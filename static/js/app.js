@@ -99,19 +99,95 @@ async function fetchFiles(camera) {
   try {
     const resp = await fetch(`/api/files?camera=${encodeURIComponent(camera)}`);
     const data = await resp.json();
-    renderFileTree(data);
+    await renderFileTree(data, camera);
   } catch (err) {
     console.error('Error fetching files:', err);
   }
 }
 
-function renderFileTree(data) {
+async function fetchAlarmsForDate(camera, date) {
+  try {
+    const resp = await fetch(`/api/alarms/range?camera=${encodeURIComponent(camera)}&date=${date}`);
+    return await resp.json();
+  } catch (err) {
+    return [];
+  }
+}
+
+function fileHasAlarm(file, events) {
+  const name = file.replace('.mp4', '');
+  const parts = name.split('-');
+  if (parts.length < 2) return null;
+  const h = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10);
+  if (isNaN(h) || isNaN(m)) return null;
+
+  const startSec = h * 3600 + m * 60;
+  const endMin = Math.ceil((m + 1) / 10) * 10;
+  const endH = endMin >= 60 ? h + 1 : h;
+  const endM = endMin >= 60 ? 0 : endMin;
+  const endSec = endH * 3600 + endM * 60;
+
+  const matched = [];
+  for (const e of events) {
+    const t = new Date(e.time);
+    const eSec = t.getHours() * 3600 + t.getMinutes() * 60;
+    if (eSec >= startSec && eSec < endSec) {
+      matched.push({
+        time: t.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        event: e.event || 'Unknown',
+      });
+    }
+  }
+  return matched.length > 0 ? matched : null;
+}
+
+const ALARM_ICONS = {
+  HumanDetect: {
+    svg: '<svg class="alarm-icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+    cssClass: 'alarm-icon-human',
+  },
+  MotionDetect: {
+    svg: '<svg class="alarm-icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
+    cssClass: 'alarm-icon-motion',
+  },
+  Alarm: {
+    svg: '<svg class="alarm-icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+    cssClass: 'alarm-icon-alarm',
+  },
+  HeartBeat: {
+    svg: '<svg class="alarm-icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
+    cssClass: 'alarm-icon-heartbeat',
+  },
+};
+
+const ALARM_ICON_DEFAULT = {
+  svg: '<svg class="alarm-icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',
+  cssClass: 'alarm-icon',
+};
+
+function getAlarmIconInfo(eventType) {
+  return ALARM_ICONS[eventType] || ALARM_ICON_DEFAULT;
+}
+
+async function renderFileTree(data, camera) {
   const container = document.getElementById('file-tree');
   container.innerHTML = '';
 
-  const ul = document.createElement('ul');
-
   const folders = Object.keys(data).sort().reverse();
+
+  const alarmPromises = folders.map(folder => {
+    const date = folder.replace(/\//g, '-');
+    return fetchAlarmsForDate(camera, date).then(events => ({ folder, events: events || [] }));
+  });
+
+  const alarmResults = await Promise.all(alarmPromises);
+  const alarmsByFolder = {};
+  for (const { folder, events } of alarmResults) {
+    alarmsByFolder[folder] = events;
+  }
+
+  const ul = document.createElement('ul');
 
   folders.forEach((folder, idx) => {
     const li = document.createElement('li');
@@ -124,16 +200,33 @@ function renderFileTree(data) {
     fileUl.className = idx > 0 ? 'collapsed' : '';
 
     const files = data[folder] || [];
+    const events = alarmsByFolder[folder] || [];
     files.sort().reverse().forEach(file => {
       const fileLi = document.createElement('li');
       fileLi.className = 'file';
-      fileLi.textContent = file.replace('.mp4', '');
-      fileLi.onclick = (e) => {
+
+      const matched = fileHasAlarm(file, events);
+      if (matched) {
+        const primaryEvent = matched[0].event;
+        const iconInfo = getAlarmIconInfo(primaryEvent);
+        const iconSpan = document.createElement('span');
+        iconSpan.className = 'alarm-icon ' + iconInfo.cssClass;
+        iconSpan.innerHTML = iconInfo.svg;
+        iconSpan.title = matched.map(m => m.event + ': ' + m.time).join('\n');
+        fileLi.appendChild(iconSpan);
+      }
+
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = file.replace('.mp4', '');
+      nameSpan.style.cursor = 'pointer';
+      nameSpan.onclick = (e) => {
         e.stopPropagation();
         playFile(folder, file);
         document.querySelectorAll('.file-tree .file').forEach(el => el.classList.remove('active'));
         fileLi.classList.add('active');
       };
+      fileLi.appendChild(nameSpan);
+
       fileUl.appendChild(fileLi);
     });
 
