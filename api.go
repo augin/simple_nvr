@@ -15,18 +15,20 @@ import (
 )
 
 type API struct {
-	config   *NVRConfig
-	recorder *Recorder
-	storage  *Storage
-	alarm    *AlarmServer
+	config     *NVRConfig
+	configPath string
+	recorder   *Recorder
+	storage    *Storage
+	alarm      *AlarmServer
 }
 
-func NewAPI(config *NVRConfig, recorder *Recorder, storage *Storage, alarm *AlarmServer) *API {
+func NewAPI(config *NVRConfig, configPath string, recorder *Recorder, storage *Storage, alarm *AlarmServer) *API {
 	return &API{
-		config:   config,
-		recorder: recorder,
-		storage:  storage,
-		alarm:    alarm,
+		config:     config,
+		configPath: configPath,
+		recorder:   recorder,
+		storage:    storage,
+		alarm:      alarm,
 	}
 }
 
@@ -223,6 +225,23 @@ func (a *API) HandleSaveConfig(w http.ResponseWriter, r *http.Request) {
 	a.config.Go2RTCConfigPath = cfg.Go2RTCConfigPath
 	if cfg.HTTPPort > 0 {
 		a.config.HTTPPort = cfg.HTTPPort
+	}
+	a.config.AlarmEnabled = cfg.AlarmEnabled
+	if cfg.AlarmPort > 0 {
+		a.config.AlarmPort = cfg.AlarmPort
+	}
+	a.config.MQTTHost = cfg.MQTTHost
+	if cfg.MQTTPort > 0 {
+		a.config.MQTTPort = cfg.MQTTPort
+	}
+	a.config.MQTTUser = cfg.MQTTUser
+	a.config.MQTTPass = cfg.MQTTPass
+	a.config.AlarmCommand = cfg.AlarmCommand
+
+	if err := saveNVRConfig(a.configPath, a.config); err != nil {
+		log.Printf("Error saving config: %v", err)
+		http.Error(w, "save error", http.StatusInternalServerError)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")

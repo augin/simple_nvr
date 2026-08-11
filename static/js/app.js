@@ -631,13 +631,13 @@ async function loadAlarmLog() {
       return;
     }
 
-    let html = '<table><thead><tr><th>Время</th><th>Камера</th><th>Тип</th><th>Событие</th><th>Статус</th><th>Описание</th><th>IP</th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>Время</th><th>Камера</th><th>Событие</th><th>Статус</th><th>Описание</th><th>IP</th></tr></thead><tbody>';
     data.forEach(e => {
       const time = new Date(e.time).toLocaleString('ru-RU');
+      const camera = e.camera || e.address || '-';
       html += '<tr>';
       html += '<td>' + time + '</td>';
-      html += '<td>' + (e.serial_id || '-') + '</td>';
-      html += '<td>' + (e.type || '-') + '</td>';
+      html += '<td class="alarm-camera">' + camera + '</td>';
       html += '<td>' + (e.event || '-') + '</td>';
       html += '<td class="alarm-status-' + (e.status === 'Start' ? 'start' : 'stop') + '">' + (e.status || '-') + '</td>';
       html += '<td>' + (e.descrip || '-') + '</td>';

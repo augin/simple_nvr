@@ -1,13 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +21,7 @@ import (
 
 type AlarmEvent struct {
 	Time     time.Time `json:"time"`
+	Camera   string    `json:"camera"`
 	SerialID string    `json:"serial_id"`
 	Type     string    `json:"type"`
 	Event    string    `json:"event"`
@@ -23,27 +29,30 @@ type AlarmEvent struct {
 	Status   string    `json:"status"`
 	Descrip  string    `json:"descrip"`
 	Address  string    `json:"address"`
-	Raw      any       `json:"raw"`
 }
 
 type AlarmServer struct {
 	config   *NVRConfig
+	ipMap    map[string]string
 	mu       sync.Mutex
 	log      []AlarmEvent
 	running  bool
 	listener net.Listener
 	mqtt     mqtt.Client
-	conn     chan net.Conn
 	stopCh   chan struct{}
 }
 
-const maxAlarmLog = 500
+const (
+	maxAlarmLog = 500
+	alarmDir    = "/var/lib/simple-nvr/alarms"
+	retentionDays = 30
+)
 
-func NewAlarmServer(config *NVRConfig) *AlarmServer {
+func NewAlarmServer(config *NVRConfig, ipMap map[string]string) *AlarmServer {
 	return &AlarmServer{
 		config: config,
+		ipMap:  ipMap,
 		log:    make([]AlarmEvent, 0, maxAlarmLog),
-		conn:   make(chan net.Conn, 16),
 		stopCh: make(chan struct{}),
 	}
 }
@@ -56,6 +65,10 @@ func (s *AlarmServer) Start() error {
 		return fmt.Errorf("alarm server already running")
 	}
 
+	if err := os.MkdirAll(alarmDir, 0755); err != nil {
+		return fmt.Errorf("failed to create alarm dir: %v", err)
+	}
+
 	addr := fmt.Sprintf(":%d", s.config.AlarmPort)
 	var err error
 	s.listener, err = net.Listen("tcp", addr)
@@ -66,11 +79,14 @@ func (s *AlarmServer) Start() error {
 	s.running = true
 	s.stopCh = make(chan struct{})
 
+	s.loadRecentEvents(7)
+
 	if s.config.MQTTHost != "" {
 		s.connectMQTT()
 	}
 
 	go s.acceptLoop()
+	go s.cleanupLoop()
 	log.Printf("Alarm server started on %s", addr)
 	return nil
 }
@@ -159,12 +175,21 @@ func (s *AlarmServer) handleClient(conn net.Conn) {
 			Status:   getString(rawData, "Status"),
 			Descrip:  getString(rawData, "Descrip"),
 			Address:  decodeAddress(rawData["Address"]),
-			Raw:      rawData,
+		}
+
+		if s.ipMap != nil {
+			event.Camera = s.ipMap[event.Address]
 		}
 
 		s.addLog(event)
-		log.Printf("Alarm event: serial=%s type=%s event=%s status=%s",
-			event.SerialID, event.Type, event.Event, event.Status)
+		s.saveEvent(event)
+
+		cameraLog := event.Camera
+		if cameraLog == "" {
+			cameraLog = event.Address
+		}
+		log.Printf("Alarm event: camera=%s serial=%s type=%s event=%s status=%s",
+			cameraLog, event.SerialID, event.Type, event.Event, event.Status)
 
 		s.publishMQTT(event)
 
@@ -181,6 +206,114 @@ func (s *AlarmServer) addLog(event AlarmEvent) {
 	s.log = append(s.log, event)
 	if len(s.log) > maxAlarmLog {
 		s.log = s.log[len(s.log)-maxAlarmLog:]
+	}
+}
+
+func (s *AlarmServer) saveEvent(event AlarmEvent) {
+	fileName := event.Time.Format("2006-01-02") + ".jsonl"
+	filePath := filepath.Join(alarmDir, fileName)
+
+	data, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("Alarm marshal error: %v", err)
+		return
+	}
+
+	f, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Printf("Alarm file open error: %v", err)
+		return
+	}
+	defer f.Close()
+
+	f.Write(data)
+	f.WriteString("\n")
+}
+
+func (s *AlarmServer) loadRecentEvents(days int) {
+	now := time.Now()
+	for i := 0; i < days; i++ {
+		date := now.AddDate(0, 0, -i)
+		fileName := date.Format("2006-01-02") + ".jsonl"
+		filePath := filepath.Join(alarmDir, fileName)
+
+		events, err := readEventsFile(filePath)
+		if err != nil {
+			continue
+		}
+
+		s.mu.Lock()
+		for _, e := range events {
+			s.log = append(s.log, e)
+		}
+		s.mu.Unlock()
+	}
+
+	s.mu.Lock()
+	if len(s.log) > maxAlarmLog {
+		s.log = s.log[len(s.log)-maxAlarmLog:]
+	}
+	s.mu.Unlock()
+}
+
+func readEventsFile(path string) ([]AlarmEvent, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var events []AlarmEvent
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var event AlarmEvent
+		if err := json.Unmarshal(line, &event); err != nil {
+			continue
+		}
+		events = append(events, event)
+	}
+
+	return events, scanner.Err()
+}
+
+func (s *AlarmServer) cleanupOldEvents() {
+	threshold := time.Now().AddDate(0, 0, -retentionDays)
+	thresholdStr := threshold.Format("2006-01-02")
+
+	entries, err := os.ReadDir(alarmDir)
+	if err != nil {
+		return
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+			continue
+		}
+		dateStr := strings.TrimSuffix(entry.Name(), ".jsonl")
+		if dateStr < thresholdStr {
+			os.Remove(filepath.Join(alarmDir, entry.Name()))
+			log.Printf("Alarm: cleaned up old log %s", entry.Name())
+		}
+	}
+}
+
+func (s *AlarmServer) cleanupLoop() {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.stopCh:
+			return
+		case <-ticker.C:
+			s.cleanupOldEvents()
+		}
 	}
 }
 
@@ -204,21 +337,21 @@ func (s *AlarmServer) GetStatus() map[string]any {
 
 func (s *AlarmServer) GetLog(limit int) []AlarmEvent {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	logCopy := make([]AlarmEvent, len(s.log))
+	copy(logCopy, s.log)
+	s.mu.Unlock()
 
-	n := len(s.log)
+	n := len(logCopy)
 	if limit > 0 && limit < n {
 		n = limit
 	}
 
 	result := make([]AlarmEvent, n)
-	for i := 0; i < n; i++ {
-		result[i] = s.log[len(s.log)-n+i]
-	}
+	copy(result, logCopy[len(logCopy)-n:])
 
-	for i, j := 0, len(result)-1; i < j; i, j = i+1, j-1 {
-		result[i], result[j] = result[j], result[i]
-	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Time.After(result[j].Time)
+	})
 
 	return result
 }
@@ -261,11 +394,14 @@ func (s *AlarmServer) publishMQTT(event AlarmEvent) {
 	topic := "dvr-alarm-server"
 	serial := event.SerialID
 
-	data, _ := json.Marshal(event.Raw)
+	data, _ := json.Marshal(event)
 
 	s.mqtt.Publish(topic+"/events", 0, false, data)
 	s.mqtt.Publish(fmt.Sprintf("%s/devices/%s/events", topic, serial), 0, false, data)
 
+	if event.Camera != "" {
+		s.mqtt.Publish(fmt.Sprintf("%s/devices/%s/camera", topic, serial), 0, false, event.Camera)
+	}
 	if event.Type != "" {
 		s.mqtt.Publish(fmt.Sprintf("%s/devices/%s/type", topic, serial), 0, false, event.Type)
 	}

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net"
+	"net/url"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -25,6 +27,7 @@ type NVRConfig struct {
 type Go2RTCConfig struct {
 	StreamOrder []string
 	Streams     map[string]any
+	IPMap       map[string]string
 }
 
 func loadNVRConfig(path string) (*NVRConfig, error) {
@@ -91,7 +94,27 @@ func loadGo2RTCConfig(path string) (*Go2RTCConfig, error) {
 			break
 		}
 	}
+	cfg.IPMap = buildIPMap(cfg.Streams)
 	return cfg, nil
+}
+
+func buildIPMap(streams map[string]any) map[string]string {
+	ipMap := make(map[string]string)
+	for name, val := range streams {
+		urlStr, ok := val.(string)
+		if !ok {
+			continue
+		}
+		u, err := url.Parse(urlStr)
+		if err != nil {
+			continue
+		}
+		host := u.Hostname()
+		if net.ParseIP(host) != nil {
+			ipMap[host] = name
+		}
+	}
+	return ipMap
 }
 
 func saveNVRConfig(path string, cfg *NVRConfig) error {

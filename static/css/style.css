@@ -725,6 +725,11 @@ body {
   color: var(--success);
 }
 
+.alarm-camera {
+  font-weight: 600;
+  color: var(--accent);
+}
+
 .btn-danger {
   background-color: var(--danger);
   border-color: var(--danger);

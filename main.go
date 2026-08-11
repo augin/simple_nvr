@@ -69,10 +69,19 @@ func main() {
 	log.Printf("Stream server: %s", config.StreamServer)
 	log.Printf("Target size: %d GB", config.TargetSizeGB)
 
+	var ipMap map[string]string
+	go2cfg, err := loadGo2RTCConfig(config.Go2RTCConfigPath)
+	if err != nil {
+		log.Printf("Warning: could not load go2rtc config: %v", err)
+	} else {
+		ipMap = go2cfg.IPMap
+		log.Printf("IP camera map: %d entries", len(ipMap))
+	}
+
 	recorder := NewRecorder(config)
 	storage := NewStorage(config)
-	alarm := NewAlarmServer(config)
-	api := NewAPI(config, recorder, storage, alarm)
+	alarm := NewAlarmServer(config, ipMap)
+	api := NewAPI(config, *configPath, recorder, storage, alarm)
 
 	go startScheduler(recorder)
 
