@@ -5,11 +5,12 @@ SRC=/root/simple_nvr
 BIN=/usr/bin/simple-nvr
 STATIC=/usr/share/simple-nvr
 CONF=/etc/simple-nvr/nvr.yaml
+VERSION=${1:-$(cd "$SRC" && git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')}
 
-echo "Building..."
+echo "Building v${VERSION}..."
 cd "$SRC"
 export PATH=$PATH:/usr/local/go/bin
-CGO_ENABLED=0 go build -ldflags="-s -w" -o nvr .
+CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${VERSION}" -o nvr .
 
 echo "Deploying..."
 cp nvr "$BIN"
