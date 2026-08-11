@@ -171,6 +171,12 @@ func (a *API) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(status)
 }
 
+func (a *API) HandleCamerasStorage(w http.ResponseWriter, r *http.Request) {
+	data := a.storage.GetCamerasStorage()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data)
+}
+
 func (a *API) HandleRecordStart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -221,7 +227,8 @@ func (a *API) HandleSaveConfig(w http.ResponseWriter, r *http.Request) {
 	a.config.BaseDir = cfg.BaseDir
 	a.config.ArchiveDir = cfg.ArchiveDir
 	a.config.StreamServer = cfg.StreamServer
-	a.config.TargetSizeGB = cfg.TargetSizeGB
+	a.config.DefaultCameraLimitGB = cfg.DefaultCameraLimitGB
+	a.config.GlobalSizeGB = cfg.GlobalSizeGB
 	a.config.Go2RTCConfigPath = cfg.Go2RTCConfigPath
 	if cfg.HTTPPort > 0 {
 		a.config.HTTPPort = cfg.HTTPPort
@@ -237,6 +244,12 @@ func (a *API) HandleSaveConfig(w http.ResponseWriter, r *http.Request) {
 	a.config.MQTTUser = cfg.MQTTUser
 	a.config.MQTTPass = cfg.MQTTPass
 	a.config.AlarmCommand = cfg.AlarmCommand
+	if cfg.CameraLimits != nil {
+		a.config.CameraLimits = cfg.CameraLimits
+	}
+	if cfg.CameraDayLimits != nil {
+		a.config.CameraDayLimits = cfg.CameraDayLimits
+	}
 
 	if err := saveNVRConfig(a.configPath, a.config); err != nil {
 		log.Printf("Error saving config: %v", err)

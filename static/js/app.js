@@ -593,14 +593,14 @@ async function fetchStatus() {
       const storageEl = document.getElementById('storage-info');
       if (storageEl) {
         storageEl.innerHTML = `
-          <div>Размер: <span class="value">${data.storage.total_size_gb.toFixed(2)} ГБ</span> / <span class="value">${data.storage.target_size_gb} ГБ</span></div>
+          <div>Размер: <span class="value">${data.storage.total_size_gb.toFixed(2)} ГБ</span> / <span class="value">${data.storage.default_camera_limit_gb} ГБ</span></div>
           <div>Файлов: <span class="value">${data.storage.file_count}</span></div>
         `;
       }
       const mStorageEl = document.getElementById('monitoring-storage');
       if (mStorageEl) {
         mStorageEl.innerHTML = `
-          <div>Размер: <span class="value">${data.storage.total_size_gb.toFixed(2)} ГБ</span> / <span class="value">${data.storage.target_size_gb} ГБ</span></div>
+          <div>Размер: <span class="value">${data.storage.total_size_gb.toFixed(2)} ГБ</span> / <span class="value">${data.storage.default_camera_limit_gb} ГБ</span></div>
           <div>Файлов: <span class="value">${data.storage.file_count}</span></div>
           <div>Директория: <span class="value">${data.storage.base_dir}</span></div>
         `;
@@ -641,7 +641,8 @@ async function loadSettings() {
     document.getElementById('base_dir').value = cfg.base_dir || '';
     document.getElementById('archive_dir').value = cfg.archive_dir || '';
     document.getElementById('stream_server').value = cfg.stream_server || '';
-    document.getElementById('target_size_gb').value = cfg.target_size_gb || 90;
+    document.getElementById('default_camera_limit_gb').value = cfg.default_camera_limit_gb || 90;
+    document.getElementById('global_size_gb').value = cfg.global_size_gb || 0;
     document.getElementById('go2rtc_config_path').value = cfg.go2rtc_config_path || '';
     document.getElementById('http_port').value = cfg.http_port || 8180;
   } catch (err) {
@@ -656,7 +657,8 @@ async function saveSettings(e) {
     base_dir: document.getElementById('base_dir').value,
     archive_dir: document.getElementById('archive_dir').value,
     stream_server: document.getElementById('stream_server').value,
-    target_size_gb: parseInt(document.getElementById('target_size_gb').value),
+    default_camera_limit_gb: parseInt(document.getElementById('default_camera_limit_gb').value),
+    global_size_gb: parseInt(document.getElementById('global_size_gb').value) || 0,
     go2rtc_config_path: document.getElementById('go2rtc_config_path').value,
     http_port: parseInt(document.getElementById('http_port').value),
   };
@@ -670,6 +672,158 @@ async function saveSettings(e) {
     alert('Настройки сохранены');
   } catch (err) {
     console.error('Error saving settings:', err);
+    alert('Ошибка сохранения');
+  }
+}
+
+function switchSubTab(tab) {
+  document.querySelectorAll('#tab-settings .sub-tab').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('#tab-settings .sub-tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelector(`#tab-settings .sub-tab[onclick="switchSubTab('${tab}')"]`).classList.add('active');
+  document.getElementById('subtab-' + tab).classList.add('active');
+
+  if (tab === 'limits') {
+    loadCameraLimits();
+  }
+}
+
+function formatRecordingTime(fileCount) {
+  const totalMinutes = fileCount * 10;
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  if (days > 0) {
+    return days + 'д ' + hours + 'ч';
+  }
+  if (hours > 0) {
+    return hours + 'ч';
+  }
+  return '< 1ч';
+}
+
+async function loadCameraLimits() {
+  try {
+    const [configResp, camerasResp, storageResp] = await Promise.all([
+      fetch('/api/config'),
+      fetch('/api/cameras'),
+      fetch('/api/storage/cameras'),
+    ]);
+
+    const cfg = await configResp.json();
+    const camerasData = await camerasResp.json();
+    const storage = await storageResp.json();
+
+    currentConfig = cfg;
+    const globalTarget = cfg.default_camera_limit_gb || 90;
+    const limits = cfg.camera_limits || {};
+    const dayLimits = cfg.camera_day_limits || {};
+
+    document.getElementById('limits-default-camera').textContent = globalTarget;
+    document.getElementById('limits-global-target').textContent = cfg.global_size_gb || 0;
+
+    const cameras = camerasData.cameras || [];
+    const container = document.getElementById('camera-limits-list');
+    container.innerHTML = '';
+
+    if (cameras.length === 0) {
+      container.innerHTML = '<div class="empty-msg">Камеры не найдены</div>';
+      return;
+    }
+
+    cameras.forEach(camera => {
+      const camStorage = storage[camera] || { size_gb: 0, file_count: 0 };
+      const limitValue = limits[camera] || globalTarget;
+      const dayLimitValue = dayLimits[camera] || 0;
+
+      const row = document.createElement('div');
+      row.className = 'camera-limit-row';
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'camera-limit-name';
+      nameSpan.textContent = camera;
+
+      const sizeSpan = document.createElement('span');
+      sizeSpan.className = 'camera-limit-size';
+      sizeSpan.textContent = camStorage.size_gb.toFixed(1) + ' ГБ';
+
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'camera-limit-time';
+      timeSpan.textContent = formatRecordingTime(camStorage.file_count);
+
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.className = 'form-input form-input-sm';
+      input.value = limitValue;
+      input.min = 1;
+      input.dataset.camera = camera;
+      input.dataset.field = 'size';
+
+      const unitSpan = document.createElement('span');
+      unitSpan.className = 'camera-limit-unit';
+      unitSpan.textContent = 'ГБ';
+
+      const dayInput = document.createElement('input');
+      dayInput.type = 'number';
+      dayInput.className = 'form-input form-input-sm';
+      dayInput.value = dayLimitValue || '';
+      dayInput.min = 1;
+      dayInput.placeholder = 'нет';
+      dayInput.dataset.camera = camera;
+      dayInput.dataset.field = 'days';
+
+      const dayUnitSpan = document.createElement('span');
+      dayUnitSpan.className = 'camera-limit-unit';
+      dayUnitSpan.textContent = 'дн';
+
+      row.appendChild(nameSpan);
+      row.appendChild(sizeSpan);
+      row.appendChild(timeSpan);
+      row.appendChild(input);
+      row.appendChild(unitSpan);
+      row.appendChild(dayInput);
+      row.appendChild(dayUnitSpan);
+      container.appendChild(row);
+    });
+  } catch (err) {
+    console.error('Error loading camera limits:', err);
+  }
+}
+
+async function saveCameraLimits() {
+  const inputs = document.querySelectorAll('#camera-limits-list input[type="number"]');
+  const cameraLimits = {};
+  const cameraDayLimits = {};
+
+  inputs.forEach(input => {
+    const camera = input.dataset.camera;
+    const field = input.dataset.field;
+    const value = parseInt(input.value);
+    if (!camera) return;
+
+    if (field === 'days') {
+      if (value > 0) {
+        cameraDayLimits[camera] = value;
+      }
+    } else {
+      if (value > 0) {
+        cameraLimits[camera] = value;
+      }
+    }
+  });
+
+  try {
+    const resp = await fetch('/api/config');
+    const cfg = await resp.json();
+    cfg.camera_limits = cameraLimits;
+    cfg.camera_day_limits = cameraDayLimits;
+
+    await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cfg),
+    });
+    alert('Лимиты сохранены');
+  } catch (err) {
+    console.error('Error saving camera limits:', err);
     alert('Ошибка сохранения');
   }
 }

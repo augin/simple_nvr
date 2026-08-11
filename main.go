@@ -67,7 +67,7 @@ func main() {
 	log.Printf("Static: %s", *staticDir)
 	log.Printf("Base dir: %s", config.BaseDir)
 	log.Printf("Stream server: %s", config.StreamServer)
-	log.Printf("Target size: %d GB", config.TargetSizeGB)
+	log.Printf("Default camera limit: %d GB, Global limit: %d GB", config.DefaultCameraLimitGB, config.GlobalSizeGB)
 
 	var ipMap map[string]string
 	go2cfg, err := loadGo2RTCConfig(config.Go2RTCConfigPath)
@@ -125,6 +125,7 @@ func main() {
 	mux.HandleFunc("/api/archive/delete", api.HandleArchiveDelete)
 	mux.HandleFunc("/api/archive", api.HandleArchive)
 	mux.HandleFunc("/api/status", api.HandleStatus)
+	mux.HandleFunc("/api/storage/cameras", api.HandleCamerasStorage)
 	mux.HandleFunc("/api/record/start", api.HandleRecordStart)
 	mux.HandleFunc("/api/record/stop", api.HandleRecordStop)
 	mux.HandleFunc("/api/config", func(w http.ResponseWriter, r *http.Request) {
@@ -167,6 +168,8 @@ func startScheduler(recorder *Recorder) {
 	time.Sleep(time.Duration(remaining) * time.Second)
 
 	for {
+		storage := NewStorage(recorder.config)
+		storage.CleanCameraFolders()
 		recorder.StartRecording(607)
 		time.Sleep(10 * time.Minute)
 	}

@@ -74,11 +74,6 @@ func (r *Recorder) StartRecording(durations ...int) {
 			r.active = false
 		}
 		r.mu.Unlock()
-
-		if r.epoch == myEpoch {
-			storage := NewStorage(r.config)
-			storage.CleanCameraFolders()
-		}
 	}()
 }
 

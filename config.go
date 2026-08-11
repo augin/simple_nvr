@@ -9,19 +9,22 @@ import (
 )
 
 type NVRConfig struct {
-	BaseDir          string `yaml:"base_dir" json:"base_dir"`
-	ArchiveDir       string `yaml:"archive_dir" json:"archive_dir"`
-	StreamServer     string `yaml:"stream_server" json:"stream_server"`
-	TargetSizeGB     int    `yaml:"target_size_gb" json:"target_size_gb"`
-	Go2RTCConfigPath string `yaml:"go2rtc_config_path" json:"go2rtc_config_path"`
-	HTTPPort         int    `yaml:"http_port" json:"http_port"`
-	AlarmEnabled     bool   `yaml:"alarm_enabled" json:"alarm_enabled"`
-	AlarmPort        int    `yaml:"alarm_port" json:"alarm_port"`
-	MQTTHost         string `yaml:"mqtt_host" json:"mqtt_host"`
-	MQTTPort         int    `yaml:"mqtt_port" json:"mqtt_port"`
-	MQTTUser         string `yaml:"mqtt_user" json:"mqtt_user"`
-	MQTTPass         string `yaml:"mqtt_pass" json:"mqtt_pass"`
-	AlarmCommand     string `yaml:"alarm_command" json:"alarm_command"`
+	BaseDir              string         `yaml:"base_dir" json:"base_dir"`
+	ArchiveDir           string         `yaml:"archive_dir" json:"archive_dir"`
+	StreamServer         string         `yaml:"stream_server" json:"stream_server"`
+	DefaultCameraLimitGB int            `yaml:"default_camera_limit_gb" json:"default_camera_limit_gb"`
+	GlobalSizeGB         int            `yaml:"global_size_gb" json:"global_size_gb"`
+	Go2RTCConfigPath     string         `yaml:"go2rtc_config_path" json:"go2rtc_config_path"`
+	HTTPPort             int            `yaml:"http_port" json:"http_port"`
+	AlarmEnabled         bool           `yaml:"alarm_enabled" json:"alarm_enabled"`
+	AlarmPort            int            `yaml:"alarm_port" json:"alarm_port"`
+	MQTTHost             string         `yaml:"mqtt_host" json:"mqtt_host"`
+	MQTTPort             int            `yaml:"mqtt_port" json:"mqtt_port"`
+	MQTTUser             string         `yaml:"mqtt_user" json:"mqtt_user"`
+	MQTTPass             string         `yaml:"mqtt_pass" json:"mqtt_pass"`
+	AlarmCommand         string         `yaml:"alarm_command" json:"alarm_command"`
+	CameraLimits         map[string]int `yaml:"camera_limits" json:"camera_limits"`
+	CameraDayLimits      map[string]int `yaml:"camera_day_limits" json:"camera_day_limits"`
 }
 
 type Go2RTCConfig struct {
@@ -47,8 +50,11 @@ func loadNVRConfig(path string) (*NVRConfig, error) {
 	if cfg.HTTPPort == 0 {
 		cfg.HTTPPort = 8180
 	}
-	if cfg.TargetSizeGB == 0 {
-		cfg.TargetSizeGB = 90
+	if cfg.DefaultCameraLimitGB == 0 {
+		cfg.DefaultCameraLimitGB = 90
+	}
+	if cfg.GlobalSizeGB == 0 {
+		cfg.GlobalSizeGB = 500
 	}
 	if cfg.AlarmPort == 0 {
 		cfg.AlarmPort = 15002

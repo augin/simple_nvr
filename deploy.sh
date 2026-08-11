@@ -26,7 +26,8 @@ if [ ! -f "$CONF" ]; then
 base_dir: '/var/lib/simple-nvr/recordings'
 archive_dir: '/var/lib/simple-nvr/archive'
 stream_server: 'rtsp://127.0.0.1:8554'
-target_size_gb: 90
+default_camera_limit_gb: 90
+global_size_gb: 500
 go2rtc_config_path: /etc/go2rtc/go2rtc.yaml
 http_port: 8180
 EOF

@@ -187,40 +187,66 @@
     </section>
 
     <section id="tab-settings" class="tab-content">
-      <div class="card">
-        <div class="card-header">
-          <h3>Настройки</h3>
+      <div class="sub-tabs">
+        <button class="sub-tab active" onclick="switchSubTab('main')">Основные</button>
+        <button class="sub-tab" onclick="switchSubTab('limits')">Лимиты по камерам</button>
+      </div>
+
+      <div id="subtab-main" class="sub-tab-content active">
+        <div class="card">
+          <div class="card-header">
+            <h3>Настройки</h3>
+          </div>
+          <div class="card-body">
+            <form id="settings-form" class="grid-form" onsubmit="saveSettings(event)">
+              <div class="form-group">
+                <label for="base_dir">Директория хранения</label>
+                <input type="text" id="base_dir" name="base_dir" class="form-input">
+              </div>
+              <div class="form-group">
+                <label for="archive_dir">Директория архива</label>
+                <input type="text" id="archive_dir" name="archive_dir" class="form-input">
+              </div>
+              <div class="form-group">
+                <label for="stream_server">RTSP сервер</label>
+                <input type="text" id="stream_server" name="stream_server" class="form-input">
+              </div>
+              <div class="form-group">
+                <label for="default_camera_limit_gb">Лимит на камеру по умолчанию (ГБ)</label>
+                <input type="number" id="default_camera_limit_gb" name="default_camera_limit_gb" class="form-input">
+              </div>
+              <div class="form-group">
+                <label for="global_size_gb">Глобальный лимит (ГБ, 0 = без лимита)</label>
+                <input type="number" id="global_size_gb" name="global_size_gb" class="form-input">
+              </div>
+              <div class="form-group">
+                <label for="go2rtc_config_path">Путь к go2rtc.yaml</label>
+                <input type="text" id="go2rtc_config_path" name="go2rtc_config_path" class="form-input">
+              </div>
+              <div class="form-group">
+                <label for="http_port">Порт HTTP</label>
+                <input type="number" id="http_port" name="http_port" class="form-input">
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Сохранить</button>
+              </div>
+            </form>
+          </div>
         </div>
-        <div class="card-body">
-          <form id="settings-form" class="grid-form" onsubmit="saveSettings(event)">
-            <div class="form-group">
-              <label for="base_dir">Директория хранения</label>
-              <input type="text" id="base_dir" name="base_dir" class="form-input">
-            </div>
-            <div class="form-group">
-              <label for="archive_dir">Директория архива</label>
-              <input type="text" id="archive_dir" name="archive_dir" class="form-input">
-            </div>
-            <div class="form-group">
-              <label for="stream_server">RTSP сервер</label>
-              <input type="text" id="stream_server" name="stream_server" class="form-input">
-            </div>
-            <div class="form-group">
-              <label for="target_size_gb">Целевой размер (ГБ)</label>
-              <input type="number" id="target_size_gb" name="target_size_gb" class="form-input">
-            </div>
-            <div class="form-group">
-              <label for="go2rtc_config_path">Путь к go2rtc.yaml</label>
-              <input type="text" id="go2rtc_config_path" name="go2rtc_config_path" class="form-input">
-            </div>
-            <div class="form-group">
-              <label for="http_port">Порт HTTP</label>
-              <input type="number" id="http_port" name="http_port" class="form-input">
-            </div>
+      </div>
+
+      <div id="subtab-limits" class="sub-tab-content">
+        <div class="card">
+          <div class="card-header">
+            <h3>Лимиты по камерам</h3>
+            <span class="text-muted">Лимит по умолчанию: <span id="limits-default-camera">90</span> ГБ | Глобальный: <span id="limits-global-target">500</span> ГБ</span>
+          </div>
+          <div class="card-body">
+            <div id="camera-limits-list"></div>
             <div class="form-actions">
-              <button type="submit" class="btn btn-primary">Сохранить</button>
+              <button type="button" class="btn btn-primary" onclick="saveCameraLimits()">Сохранить</button>
             </div>
-          </form>
+          </div>
         </div>
       </div>
     </section>
