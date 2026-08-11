@@ -242,18 +242,14 @@ func (s *AlarmServer) loadRecentEvents(days int) {
 			continue
 		}
 
-		s.mu.Lock()
 		for _, e := range events {
 			s.log = append(s.log, e)
 		}
-		s.mu.Unlock()
 	}
 
-	s.mu.Lock()
 	if len(s.log) > maxAlarmLog {
 		s.log = s.log[len(s.log)-maxAlarmLog:]
 	}
-	s.mu.Unlock()
 }
 
 func readEventsFile(path string) ([]AlarmEvent, error) {
