@@ -158,7 +158,7 @@ func (s *AlarmServer) handleClient(conn net.Conn) {
 			Channel:  getInt(rawData, "Channel"),
 			Status:   getString(rawData, "Status"),
 			Descrip:  getString(rawData, "Descrip"),
-			Address:  decodeAddress(getString(rawData, "Address")),
+			Address:  decodeAddress(rawData["Address"]),
 			Raw:      rawData,
 		}
 
@@ -315,12 +315,23 @@ func getInt(m map[string]any, key string) int {
 	return 0
 }
 
-func decodeAddress(hexStr string) string {
+func decodeAddress(raw any) string {
+	if raw == nil {
+		return ""
+	}
+	var hexStr string
+	switch v := raw.(type) {
+	case string:
+		hexStr = v
+	case float64:
+		hexStr = fmt.Sprintf("%08X", uint32(v))
+	default:
+		return ""
+	}
 	if hexStr == "" {
 		return ""
 	}
 	var addr uint32
 	fmt.Sscanf(hexStr, "%x", &addr)
-	ip := net.IPv4(byte(addr), byte(addr>>8), byte(addr>>16), byte(addr>>24))
-	return ip.String()
+	return net.IPv4(byte(addr>>24), byte(addr>>16), byte(addr>>8), byte(addr)).String()
 }
