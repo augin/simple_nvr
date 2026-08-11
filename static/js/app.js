@@ -783,6 +783,21 @@ async function loadCameraLimits() {
       row.appendChild(dayUnitSpan);
       container.appendChild(row);
     });
+
+    let totalSum = 0;
+    cameras.forEach(camera => {
+      totalSum += limits[camera] || globalTarget;
+    });
+    document.getElementById('limits-total-sum').textContent = totalSum;
+
+    const globalSize = cfg.global_size_gb || 0;
+    const warningEl = document.getElementById('limits-warning');
+    if (globalSize > 0 && totalSum > globalSize) {
+      warningEl.style.display = 'inline';
+      warningEl.textContent = `⚠️ Превышен глобальный лимит на ${totalSum - globalSize} ГБ!`;
+    } else {
+      warningEl.style.display = 'none';
+    }
   } catch (err) {
     console.error('Error loading camera limits:', err);
   }
