@@ -1003,3 +1003,157 @@ body {
 .log-level-debug .log-message {
   color: var(--text-muted);
 }
+
+.login-screen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bg-primary);
+  z-index: 1000;
+}
+
+.login-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 32px;
+  width: 360px;
+  max-width: 90vw;
+}
+
+.login-card h2 {
+  text-align: center;
+  margin-bottom: 24px;
+  color: var(--accent);
+  font-size: 20px;
+}
+
+.login-card .form-group {
+  margin-bottom: 16px;
+}
+
+.login-card .form-actions {
+  margin-top: 24px;
+}
+
+.btn-block {
+  width: 100%;
+  padding: 10px;
+}
+
+.nav-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.nav-user {
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  background-color: var(--bg-tertiary);
+  border-radius: 4px;
+}
+
+.users-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.users-table th {
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-bottom: 2px solid var(--border);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.users-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.users-table tr:hover td {
+  background-color: var(--bg-tertiary);
+}
+
+.users-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.role-badge {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.role-badge.role-admin {
+  background-color: var(--accent);
+  color: #ffffff;
+}
+
+.role-badge.role-user {
+  background-color: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.user-add-form {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.user-add-form h4 {
+  font-size: 13px;
+  margin-bottom: 12px;
+  color: var(--text-secondary);
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.modal-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 24px;
+  width: 360px;
+  max-width: 90vw;
+}
+
+.modal-card h3 {
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+.modal-card .form-group {
+  margin-bottom: 12px;
+}
+
+.modal-card .form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}

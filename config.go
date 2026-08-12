@@ -25,6 +25,7 @@ type NVRConfig struct {
 	AlarmCommand         string         `yaml:"alarm_command" json:"alarm_command"`
 	CameraLimits         map[string]int `yaml:"camera_limits" json:"camera_limits"`
 	CameraDayLimits      map[string]int `yaml:"camera_day_limits" json:"camera_day_limits"`
+	UsersFile            string         `yaml:"users_file" json:"users_file"`
 }
 
 type Go2RTCConfig struct {
@@ -64,6 +65,9 @@ func loadNVRConfig(path string) (*NVRConfig, error) {
 	}
 	if cfg.ArchiveDir == "" {
 		cfg.ArchiveDir = cfg.BaseDir + "/archive"
+	}
+	if cfg.UsersFile == "" {
+		cfg.UsersFile = "/etc/simple-nvr/users.yaml"
 	}
 	return &cfg, nil
 }

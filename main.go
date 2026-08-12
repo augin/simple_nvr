@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-var version = "2.5.1"
+var version = "2.6.2"
 
 func findStaticDir() string {
 	exe, err := os.Executable()
@@ -83,7 +83,8 @@ func main() {
 	alarm := NewAlarmServer(config, ipMap)
 	logBuffer := NewLogBuffer(1000)
 	RedirectLogOutput(logBuffer)
-	api := NewAPI(config, *configPath, recorder, storage, alarm, logBuffer)
+	userStore := NewUserStore(config.UsersFile)
+	api := NewAPI(config, *configPath, recorder, storage, alarm, logBuffer, userStore)
 
 	go startScheduler(recorder)
 
@@ -119,6 +120,10 @@ func main() {
 
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticPath))))
 
+	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, filepath.Join(staticPath, "favicon.ico"))
+	})
+
 	mux.HandleFunc("/api/cameras", api.HandleCameras)
 	mux.HandleFunc("/api/files", api.HandleFiles)
 	mux.HandleFunc("/api/video/", api.HandleVideo)
@@ -151,6 +156,24 @@ func main() {
 	mux.HandleFunc("/api/logs", api.HandleLogs)
 	mux.HandleFunc("/api/logs/clear", api.HandleLogsClear)
 
+	mux.HandleFunc("/api/auth/login", api.HandleLogin)
+	mux.HandleFunc("/api/auth/logout", api.HandleLogout)
+	mux.HandleFunc("/api/auth/me", api.HandleMe)
+	mux.HandleFunc("/api/auth/check", api.HandleAuthCheck)
+	mux.HandleFunc("/api/users", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			RequireAdmin(api.HandleGetUsers)(w, r)
+		case http.MethodPost:
+			api.HandleAddUser(w, r)
+		case http.MethodDelete:
+			RequireAdmin(api.HandleDeleteUser)(w, r)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	mux.HandleFunc("/api/users/change-password", api.HandleChangePassword)
+
 	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"version": version})
@@ -158,7 +181,8 @@ func main() {
 
 	addr := fmt.Sprintf(":%d", config.HTTPPort)
 	log.Printf("Server starting on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
+	log.Printf("Users file: %s", config.UsersFile)
+	log.Fatal(http.ListenAndServe(addr, userStore.RequireAuth(mux)))
 }
 
 func startScheduler(recorder *Recorder) {

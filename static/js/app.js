@@ -8,22 +8,145 @@ let alarmLogTimer = null;
 let alarmRunning = false;
 let logTimer = null;
 let logLastSince = null;
+let currentUser = null;
+let currentRole = null;
 
 document.addEventListener('DOMContentLoaded', () => {
   loadTheme();
+  checkAuth();
+});
+
+async function checkAuth() {
+  try {
+    const resp = await fetch('/api/auth/check');
+    const data = await resp.json();
+
+    if (!data.auth_required) {
+      currentUser = null;
+      currentRole = null;
+      showMainUI();
+      return;
+    }
+
+    if (!data.authorized) {
+      showLoginScreen();
+      return;
+    }
+
+    currentUser = data.username;
+    currentRole = data.role;
+    showMainUI();
+  } catch (err) {
+    showMainUI();
+  }
+}
+
+function showLoginScreen() {
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('main-nav').style.display = 'none';
+  document.getElementById('main-content').style.display = 'none';
+}
+
+function showMainUI() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('main-nav').style.display = 'flex';
+  document.getElementById('main-content').style.display = 'block';
+
+  applyRoleVisibility();
+  initApp();
+}
+
+function applyRoleVisibility() {
+  const isAdmin = currentRole === 'admin';
+  const hasAuth = currentUser !== null;
+
+  document.querySelectorAll('.nav-tab[data-tab]').forEach(btn => {
+    const tab = btn.dataset.tab;
+    if (tab === 'monitoring' || tab === 'alarm' || tab === 'logs' || tab === 'settings') {
+      btn.style.display = isAdmin ? '' : 'none';
+    }
+  });
+
+  const logoutBtn = document.getElementById('btn-logout');
+  const navUser = document.getElementById('nav-user');
+  if (hasAuth) {
+    logoutBtn.style.display = '';
+    navUser.textContent = currentUser;
+    navUser.style.display = '';
+  } else {
+    logoutBtn.style.display = 'none';
+    navUser.style.display = 'none';
+  }
+
+  const usersTab = document.querySelector('[data-subtab="users"]');
+  if (usersTab) {
+    usersTab.style.display = isAdmin ? '' : 'none';
+  }
+
+  document.querySelectorAll('.admin-only').forEach(el => {
+    el.style.display = isAdmin ? '' : 'none';
+  });
+}
+
+async function doLogin(e) {
+  e.preventDefault();
+  const username = document.getElementById('login-username').value;
+  const password = document.getElementById('login-password').value;
+  const errorEl = document.getElementById('login-error');
+
+  try {
+    const resp = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+
+    if (!resp.ok) {
+      const data = await resp.json();
+      errorEl.textContent = data.error || 'Ошибка авторизации';
+      errorEl.style.display = 'block';
+      return;
+    }
+
+    const data = await resp.json();
+    currentUser = data.username;
+    currentRole = data.role;
+    showMainUI();
+  } catch (err) {
+    errorEl.textContent = 'Ошибка соединения';
+    errorEl.style.display = 'block';
+  }
+}
+
+async function doLogout() {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  currentUser = null;
+  currentRole = null;
+
+  if (alarmLogTimer) { clearInterval(alarmLogTimer); alarmLogTimer = null; }
+  if (logTimer) { clearInterval(logTimer); logTimer = null; }
+
+  showLoginScreen();
+}
+
+function initApp() {
   fetchCameras();
   fetchStatus();
   fetchVersion();
   setInterval(fetchStatus, 5000);
   initVideoZoom('video-player');
   initVideoZoom('archive-video-player');
-});
+}
 
 function switchTab(tab) {
+  const adminTabs = ['monitoring', 'alarm', 'logs', 'settings'];
+  if (adminTabs.includes(tab) && currentRole !== 'admin') return;
+
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.nav-tab').forEach(el => el.classList.remove('active'));
+  const tabBtn = document.querySelector(`.nav-tab[data-tab="${tab}"]`);
+  if (tabBtn) tabBtn.classList.add('active');
   document.getElementById('tab-' + tab).classList.add('active');
-  document.querySelector(`.nav-tab[onclick="switchTab('${tab}')"]`).classList.add('active');
 
   if (tab === 'settings') {
     loadSettings();
@@ -477,6 +600,11 @@ async function deleteArchiveFile(folder, file, element) {
       if (ul && ul.children.length === 0) {
         ul.parentElement.remove();
       }
+    } else if (resp.status === 403) {
+      alert('У вас нет прав для удаления файлов');
+    } else {
+      const data = await resp.json().catch(() => ({}));
+      alert(data.error || 'Ошибка удаления');
     }
   } catch (err) {
     console.error('Delete error:', err);
@@ -637,14 +765,14 @@ async function fetchStatus() {
       const storageEl = document.getElementById('storage-info');
       if (storageEl) {
         storageEl.innerHTML = `
-          <div>Размер: <span class="value">${data.storage.total_size_gb.toFixed(2)} ГБ</span> / <span class="value">${data.storage.default_camera_limit_gb} ГБ</span></div>
+          <div>Размер: <span class="value">${data.storage.total_size_gb.toFixed(2)} ГБ</span> / <span class="value">${data.storage.global_size_gb} ГБ</span></div>
           <div>Файлов: <span class="value">${data.storage.file_count}</span></div>
         `;
       }
       const mStorageEl = document.getElementById('monitoring-storage');
       if (mStorageEl) {
         mStorageEl.innerHTML = `
-          <div>Размер: <span class="value">${data.storage.total_size_gb.toFixed(2)} ГБ</span> / <span class="value">${data.storage.default_camera_limit_gb} ГБ</span></div>
+          <div>Размер: <span class="value">${data.storage.total_size_gb.toFixed(2)} ГБ</span> / <span class="value">${data.storage.global_size_gb} ГБ</span></div>
           <div>Файлов: <span class="value">${data.storage.file_count}</span></div>
           <div>Директория: <span class="value">${data.storage.base_dir}</span></div>
         `;
@@ -721,13 +849,20 @@ async function saveSettings(e) {
 }
 
 function switchSubTab(tab) {
+  const adminSubtabs = ['users'];
+  if (adminSubtabs.includes(tab) && currentRole !== 'admin') return;
+
   document.querySelectorAll('#tab-settings .sub-tab').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('#tab-settings .sub-tab-content').forEach(el => el.classList.remove('active'));
-  document.querySelector(`#tab-settings .sub-tab[onclick="switchSubTab('${tab}')"]`).classList.add('active');
+  const btn = document.querySelector(`#tab-settings .sub-tab[onclick="switchSubTab('${tab}')"]`);
+  if (btn) btn.classList.add('active');
   document.getElementById('subtab-' + tab).classList.add('active');
 
   if (tab === 'limits') {
     loadCameraLimits();
+  }
+  if (tab === 'users') {
+    loadUsers();
   }
 }
 
@@ -1070,5 +1205,127 @@ async function clearLogs() {
     }
   } catch (err) {
     console.error('Error clearing logs:', err);
+  }
+}
+
+async function loadUsers() {
+  try {
+    const resp = await fetch('/api/users');
+    const users = await resp.json();
+    const container = document.getElementById('users-list');
+    if (!container) return;
+
+    const entries = Object.entries(users);
+    if (entries.length === 0) {
+      container.innerHTML = '<div class="empty-msg">Нет пользователей</div>';
+      return;
+    }
+
+    let html = '<table class="users-table"><thead><tr><th>Логин</th><th>Роль</th><th></th></tr></thead><tbody>';
+    entries.forEach(([name, user]) => {
+      html += `<tr>
+        <td>${name}</td>
+        <td><span class="role-badge role-${user.role}">${user.role === 'admin' ? 'Администратор' : 'Пользователь'}</span></td>
+        <td class="users-actions">
+          <button class="btn btn-sm" onclick="showChangePassword('${name}')">Пароль</button>
+          ${name !== currentUser ? `<button class="btn btn-sm btn-danger" onclick="deleteUser('${name}')">Удалить</button>` : ''}
+        </td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  } catch (err) {
+    console.error('Error loading users:', err);
+  }
+}
+
+async function addUser(e) {
+  e.preventDefault();
+  const username = document.getElementById('new-username').value;
+  const password = document.getElementById('new-password').value;
+  const role = document.getElementById('new-role').value;
+
+  try {
+    const resp = await fetch('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, role }),
+    });
+
+    if (!resp.ok) {
+      const data = await resp.json();
+      alert(data.error || 'Ошибка создания пользователя');
+      return;
+    }
+
+    document.getElementById('new-username').value = '';
+    document.getElementById('new-password').value = '';
+    loadUsers();
+  } catch (err) {
+    console.error('Error adding user:', err);
+  }
+}
+
+async function deleteUser(username) {
+  if (!confirm(`Удалить пользователя ${username}?`)) return;
+
+  try {
+    const resp = await fetch(`/api/users?username=${encodeURIComponent(username)}`, {
+      method: 'DELETE',
+    });
+
+    if (!resp.ok) {
+      const data = await resp.json();
+      alert(data.error || 'Ошибка удаления');
+      return;
+    }
+
+    loadUsers();
+  } catch (err) {
+    console.error('Error deleting user:', err);
+  }
+}
+
+function showChangePassword(username) {
+  const dialog = document.createElement('div');
+  dialog.className = 'modal-overlay';
+  dialog.innerHTML = `
+    <div class="modal-card">
+      <h3>Смена пароля: ${username}</h3>
+      <form onsubmit="changePassword(event, '${username}')">
+        <div class="form-group">
+          <label>Новый пароль</label>
+          <input type="password" id="change-pass-new" class="form-input" required>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn" onclick="this.closest('.modal-overlay').remove()">Отмена</button>
+          <button type="submit" class="btn btn-primary">Сменить</button>
+        </div>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(dialog);
+}
+
+async function changePassword(e, username) {
+  e.preventDefault();
+  const newPass = document.getElementById('change-pass-new').value;
+
+  try {
+    const resp = await fetch('/api/users/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, new_password: newPass }),
+    });
+
+    if (!resp.ok) {
+      const data = await resp.json();
+      alert(data.error || 'Ошибка смены пароля');
+      return;
+    }
+
+    document.querySelector('.modal-overlay')?.remove();
+  } catch (err) {
+    console.error('Error changing password:', err);
   }
 }

@@ -4,23 +4,49 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Simple NVR</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
   <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
-  <nav class="nav">
-    <div class="nav-brand">Simple NVR <span class="version-pill" id="version-pill">dev</span></div>
-    <div class="nav-tabs">
-      <button class="nav-tab active" onclick="switchTab('cameras')">Камеры</button>
-      <button class="nav-tab" onclick="switchTab('archive')">Архив</button>
-      <button class="nav-tab" onclick="switchTab('monitoring')">Мониторинг</button>
-      <button class="nav-tab" onclick="switchTab('alarm')">Тревога</button>
-      <button class="nav-tab" onclick="switchTab('logs')">Логи</button>
-      <button class="nav-tab" onclick="switchTab('settings')">Настройки</button>
+  <div id="login-screen" class="login-screen" style="display:none;">
+    <div class="login-card">
+      <h2>Simple NVR</h2>
+      <form id="login-form" onsubmit="doLogin(event)">
+        <div class="form-group">
+          <label for="login-username">Логин</label>
+          <input type="text" id="login-username" class="form-input" autocomplete="username" required>
+        </div>
+        <div class="form-group">
+          <label for="login-password">Пароль</label>
+          <input type="password" id="login-password" class="form-input" autocomplete="current-password" required>
+        </div>
+        <div id="login-error" class="error-msg" style="display:none;"></div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary btn-block">Войти</button>
+        </div>
+      </form>
     </div>
-    <button class="theme-toggle" onclick="toggleTheme()" title="Переключить тему">◐</button>
+  </div>
+
+  <nav class="nav" id="main-nav" style="display:none;">
+    <div class="nav-brand">Simple NVR <span class="version-pill" id="version-pill">dev</span></div>
+    <div class="nav-tabs" id="nav-tabs">
+      <button class="nav-tab active" data-tab="cameras" onclick="switchTab('cameras')">Камеры</button>
+      <button class="nav-tab" data-tab="archive" onclick="switchTab('archive')">Архив</button>
+      <button class="nav-tab" data-tab="monitoring" onclick="switchTab('monitoring')">Мониторинг</button>
+      <button class="nav-tab" data-tab="alarm" onclick="switchTab('alarm')">Тревога</button>
+      <button class="nav-tab" data-tab="logs" onclick="switchTab('logs')">Логи</button>
+      <button class="nav-tab" data-tab="settings" onclick="switchTab('settings')">Настройки</button>
+    </div>
+    <div class="nav-right">
+      <span class="nav-user" id="nav-user"></span>
+      <button class="btn btn-sm" id="btn-logout" style="display:none;" onclick="doLogout()">Выйти</button>
+      <button class="theme-toggle" onclick="toggleTheme()" title="Переключить тему">◐</button>
+    </div>
   </nav>
 
-  <main class="main">
+  <main class="main" id="main-content" style="display:none;">
     <section id="tab-cameras" class="tab-content active">
       <div class="layout">
         <div class="sidebar">
@@ -207,9 +233,10 @@
     </section>
 
     <section id="tab-settings" class="tab-content">
-      <div class="sub-tabs">
+      <div class="sub-tabs" id="settings-subtabs">
         <button class="sub-tab active" onclick="switchSubTab('main')">Основные</button>
         <button class="sub-tab" onclick="switchSubTab('limits')">Лимиты по камерам</button>
+        <button class="sub-tab" data-subtab="users" onclick="switchSubTab('users')" style="display:none;">Пользователи</button>
       </div>
 
       <div id="subtab-main" class="sub-tab-content active">
@@ -265,6 +292,42 @@
             <div id="camera-limits-list"></div>
             <div class="form-actions">
               <button type="button" class="btn btn-primary" onclick="saveCameraLimits()">Сохранить</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="subtab-users" class="sub-tab-content">
+        <div class="card">
+          <div class="card-header">
+            <h3>Пользователи</h3>
+          </div>
+          <div class="card-body">
+            <div id="users-list"></div>
+            <div class="user-add-form">
+              <h4>Добавить пользователя</h4>
+              <form id="add-user-form" onsubmit="addUser(event)">
+                <div class="grid-form">
+                  <div class="form-group">
+                    <label for="new-username">Логин</label>
+                    <input type="text" id="new-username" class="form-input" required>
+                  </div>
+                  <div class="form-group">
+                    <label for="new-password">Пароль</label>
+                    <input type="password" id="new-password" class="form-input" required>
+                  </div>
+                  <div class="form-group">
+                    <label for="new-role">Роль</label>
+                    <select id="new-role" class="form-input">
+                      <option value="user">Пользователь</option>
+                      <option value="admin">Администратор</option>
+                    </select>
+                  </div>
+                  <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">Добавить</button>
+                  </div>
+                </div>
+              </form>
             </div>
           </div>
         </div>
