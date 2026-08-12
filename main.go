@@ -87,6 +87,8 @@ func main() {
 	userStore := NewUserStore(config.UsersFile)
 	api := NewAPI(config, *configPath, recorder, storage, alarm, hikvisionAlarm, logBuffer, userStore)
 
+	alarm.LoadRecentEvents(7)
+
 	go startScheduler(recorder)
 
 	if config.AlarmEnabled {

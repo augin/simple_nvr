@@ -82,8 +82,6 @@ func (s *AlarmServer) Start() error {
 	s.running = true
 	s.stopCh = make(chan struct{})
 
-	s.loadRecentEvents(7)
-
 	if s.config.MQTTHost != "" {
 		s.connectMQTT()
 	}
@@ -360,6 +358,12 @@ func (s *AlarmServer) ClearLog() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.log = s.log[:0]
+}
+
+func (s *AlarmServer) LoadRecentEvents(days int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.loadRecentEvents(days)
 }
 
 func (s *AlarmServer) connectMQTT() {
