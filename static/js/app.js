@@ -1011,7 +1011,8 @@ async function loadLogs() {
     if (entries.length === 0) return;
 
     const frag = document.createDocumentFragment();
-    entries.forEach(e => {
+    const entriesToRender = entries.slice().reverse();
+    entriesToRender.forEach(e => {
       const line = document.createElement('div');
       line.className = 'log-entry log-level-' + (e.level || 'info').toLowerCase();
 
