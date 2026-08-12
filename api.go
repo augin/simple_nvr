@@ -15,24 +15,26 @@ import (
 )
 
 type API struct {
-	config     *NVRConfig
-	configPath string
-	recorder   *Recorder
-	storage    *Storage
-	alarm      *AlarmServer
-	logBuffer  *LogBuffer
-	userStore  *UserStore
+	config          *NVRConfig
+	configPath      string
+	recorder        *Recorder
+	storage         *Storage
+	alarm           *AlarmServer
+	hikvisionAlarm  *HikvisionAlarmServer
+	logBuffer       *LogBuffer
+	userStore       *UserStore
 }
 
-func NewAPI(config *NVRConfig, configPath string, recorder *Recorder, storage *Storage, alarm *AlarmServer, logBuffer *LogBuffer, userStore *UserStore) *API {
+func NewAPI(config *NVRConfig, configPath string, recorder *Recorder, storage *Storage, alarm *AlarmServer, hikvisionAlarm *HikvisionAlarmServer, logBuffer *LogBuffer, userStore *UserStore) *API {
 	return &API{
-		config:     config,
-		configPath: configPath,
-		recorder:   recorder,
-		storage:    storage,
-		alarm:      alarm,
-		logBuffer:  logBuffer,
-		userStore:  userStore,
+		config:         config,
+		configPath:     configPath,
+		recorder:       recorder,
+		storage:        storage,
+		alarm:          alarm,
+		hikvisionAlarm: hikvisionAlarm,
+		logBuffer:      logBuffer,
+		userStore:      userStore,
 	}
 }
 
@@ -498,8 +500,14 @@ func (a *API) HandleArchiveDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) HandleAlarmStatus(w http.ResponseWriter, r *http.Request) {
-	status := a.alarm.GetStatus()
-	status["alarm_enabled"] = a.config.AlarmEnabled
+	dahuaStatus := a.alarm.GetStatus()
+	hikvisionStatus := a.hikvisionAlarm.GetStatus()
+
+	status := map[string]any{
+		"dahua":     dahuaStatus,
+		"hikvision": hikvisionStatus,
+		"event_count": dahuaStatus["event_count"],
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)
 }
@@ -541,6 +549,49 @@ func (a *API) HandleAlarmStop(w http.ResponseWriter, r *http.Request) {
 	a.alarm.Stop()
 
 	a.config.AlarmEnabled = false
+	saveNVRConfig(a.configPath, a.config)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "stopped"})
+}
+
+func (a *API) HandleHikvisionAlarmStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if !requireAdminRole(r) {
+		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		return
+	}
+
+	if err := a.hikvisionAlarm.Start(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	a.config.HikvisionEnabled = true
+	saveNVRConfig(a.configPath, a.config)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "started"})
+}
+
+func (a *API) HandleHikvisionAlarmStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if !requireAdminRole(r) {
+		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		return
+	}
+
+	a.hikvisionAlarm.Stop()
+
+	a.config.HikvisionEnabled = false
 	saveNVRConfig(a.configPath, a.config)
 
 	w.Header().Set("Content-Type", "application/json")

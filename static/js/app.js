@@ -1026,34 +1026,39 @@ async function loadAlarmStatus() {
   try {
     const resp = await fetch('/api/alarm/status');
     const data = await resp.json();
-    alarmRunning = data.running;
 
-    const toggle = document.getElementById('alarm-toggle');
-    const portInfo = document.getElementById('alarm-port-info');
-    const mqttInfo = document.getElementById('alarm-mqtt-info');
-    const eventsInfo = document.getElementById('alarm-events-info');
+    const dahua = data.dahua || {};
+    const hikvision = data.hikvision || {};
 
-    if (toggle) {
-      toggle.checked = data.enabled;
-    }
-    if (portInfo) {
-      portInfo.textContent = 'Порт: ' + (data.port || 15002);
-    }
-    if (mqttInfo) {
-      mqttInfo.textContent = data.mqtt_host ? 'MQTT: ' + data.mqtt_host + ':' + (data.mqtt_port || 1883) : 'MQTT: выкл';
-    }
-    if (eventsInfo) {
-      eventsInfo.textContent = 'Событий: ' + (data.event_count || 0);
-    }
+    const dahuaToggle = document.getElementById('alarm-toggle');
+    const dahuaPort = document.getElementById('alarm-port-info');
+    const dahuaMqtt = document.getElementById('alarm-mqtt-info');
+    const dahuaEvents = document.getElementById('alarm-events-info');
+
+    if (dahuaToggle) dahuaToggle.checked = dahua.enabled || false;
+    if (dahuaPort) dahuaPort.textContent = 'Порт: ' + (dahua.port || 15002);
+    if (dahuaMqtt) dahuaMqtt.textContent = dahua.mqtt_host ? 'MQTT: ' + dahua.mqtt_host + ':' + (dahua.mqtt_port || 1883) : 'MQTT: выкл';
+    if (dahuaEvents) dahuaEvents.textContent = 'Событий: ' + (dahua.event_count || 0);
+
+    const hikvisionToggle = document.getElementById('hikvision-toggle');
+    const hikvisionPort = document.getElementById('hikvision-port-info');
+    const hikvisionEvents = document.getElementById('hikvision-events-info');
+
+    if (hikvisionToggle) hikvisionToggle.checked = hikvision.running || false;
+    if (hikvisionPort) hikvisionPort.textContent = 'Порт: ' + (hikvision.port || 15003);
+    if (hikvisionEvents) hikvisionEvents.textContent = 'Событий: ' + (data.event_count || 0);
   } catch (err) {
     console.error('Error loading alarm status:', err);
   }
 }
 
-async function toggleAlarm() {
-  const toggle = document.getElementById('alarm-toggle');
+async function toggleAlarm(type) {
+  const toggleId = type === 'hikvision' ? 'hikvision-toggle' : 'alarm-toggle';
+  const toggle = document.getElementById(toggleId);
   const enabled = toggle.checked;
-  const url = enabled ? '/api/alarm/start' : '/api/alarm/stop';
+  const startUrl = type === 'hikvision' ? '/api/hikvision/start' : '/api/alarm/start';
+  const stopUrl = type === 'hikvision' ? '/api/hikvision/stop' : '/api/alarm/stop';
+  const url = enabled ? startUrl : stopUrl;
   try {
     await fetch(url, { method: 'POST' });
     loadAlarmStatus();

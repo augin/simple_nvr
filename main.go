@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-var version = "2.6.2"
+var version = "2.7.0"
 
 func findStaticDir() string {
 	exe, err := os.Executable()
@@ -81,10 +81,11 @@ func main() {
 	recorder := NewRecorder(config)
 	storage := NewStorage(config)
 	alarm := NewAlarmServer(config, ipMap)
+	hikvisionAlarm := NewHikvisionAlarmServer(config, alarm, ipMap)
 	logBuffer := NewLogBuffer(1000)
 	RedirectLogOutput(logBuffer)
 	userStore := NewUserStore(config.UsersFile)
-	api := NewAPI(config, *configPath, recorder, storage, alarm, logBuffer, userStore)
+	api := NewAPI(config, *configPath, recorder, storage, alarm, hikvisionAlarm, logBuffer, userStore)
 
 	go startScheduler(recorder)
 
@@ -94,12 +95,19 @@ func main() {
 		}
 	}
 
+	if config.HikvisionEnabled {
+		if err := hikvisionAlarm.Start(); err != nil {
+			log.Printf("Warning: failed to start hikvision alarm server: %v", err)
+		}
+	}
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
 		sig := <-sigCh
 		log.Printf("Received %v, shutting down...", sig)
 		alarm.Stop()
+		hikvisionAlarm.Stop()
 		recorder.StopRecording()
 		os.Exit(0)
 	}()
@@ -152,6 +160,9 @@ func main() {
 	mux.HandleFunc("/api/alarm/log", api.HandleAlarmLog)
 	mux.HandleFunc("/api/alarm/clear", api.HandleAlarmClear)
 	mux.HandleFunc("/api/alarms/range", api.HandleAlarmsRange)
+
+	mux.HandleFunc("/api/hikvision/start", api.HandleHikvisionAlarmStart)
+	mux.HandleFunc("/api/hikvision/stop", api.HandleHikvisionAlarmStop)
 
 	mux.HandleFunc("/api/logs", api.HandleLogs)
 	mux.HandleFunc("/api/logs/clear", api.HandleLogsClear)

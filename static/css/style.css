@@ -713,6 +713,12 @@ body {
   color: var(--text-secondary);
 }
 
+.alarm-hint {
+  margin-top: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
 .alarm-log-card .card-body {
   max-height: 60vh;
   overflow-y: auto;

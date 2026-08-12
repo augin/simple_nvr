@@ -18,6 +18,8 @@ type NVRConfig struct {
 	HTTPPort             int            `yaml:"http_port" json:"http_port"`
 	AlarmEnabled         bool           `yaml:"alarm_enabled" json:"alarm_enabled"`
 	AlarmPort            int            `yaml:"alarm_port" json:"alarm_port"`
+	HikvisionEnabled     bool           `yaml:"hikvision_enabled" json:"hikvision_enabled"`
+	HikvisionAlarmPort   int            `yaml:"hikvision_alarm_port" json:"hikvision_alarm_port"`
 	MQTTHost             string         `yaml:"mqtt_host" json:"mqtt_host"`
 	MQTTPort             int            `yaml:"mqtt_port" json:"mqtt_port"`
 	MQTTUser             string         `yaml:"mqtt_user" json:"mqtt_user"`
@@ -59,6 +61,9 @@ func loadNVRConfig(path string) (*NVRConfig, error) {
 	}
 	if cfg.AlarmPort == 0 {
 		cfg.AlarmPort = 15002
+	}
+	if cfg.HikvisionAlarmPort == 0 {
+		cfg.HikvisionAlarmPort = 15003
 	}
 	if cfg.MQTTPort == 0 {
 		cfg.MQTTPort = 1883

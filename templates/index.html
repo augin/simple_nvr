@@ -187,9 +187,9 @@
     <section id="tab-alarm" class="tab-content">
       <div class="card">
         <div class="card-header">
-          <h3>Alarm Server</h3>
+          <h3>Alarm Server (Dahua/XM)</h3>
           <label class="toggle">
-            <input type="checkbox" id="alarm-toggle" onchange="toggleAlarm()">
+            <input type="checkbox" id="alarm-toggle" onchange="toggleAlarm('dahua')">
             <span class="toggle-slider"></span>
           </label>
         </div>
@@ -198,6 +198,25 @@
             <span id="alarm-port-info"></span>
             <span id="alarm-mqtt-info"></span>
             <span id="alarm-events-info"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3>Alarm Server (Hikvision)</h3>
+          <label class="toggle">
+            <input type="checkbox" id="hikvision-toggle" onchange="toggleAlarm('hikvision')">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="card-body">
+          <div class="alarm-info">
+            <span id="hikvision-port-info"></span>
+            <span id="hikvision-events-info"></span>
+          </div>
+          <div class="alarm-hint">
+            <small>POST /hikvision/alarm — настройте камеру: Configuration → Events → Notify Surveillance Center → HTTP</small>
           </div>
         </div>
       </div>
