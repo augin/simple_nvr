@@ -546,6 +546,7 @@ func (s *HikvisionAlarmServer) GetStatus() map[string]any {
 
 func (s *HikvisionAlarmServer) handleAlarm(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
+		log.Printf("Hikvision alarm: unexpected %s from %s", r.Method, r.RemoteAddr)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -559,7 +560,7 @@ func (s *HikvisionAlarmServer) handleAlarm(w http.ResponseWriter, r *http.Reques
 
 	var hEvent HikvisionEvent
 	if err := xml.Unmarshal(body, &hEvent); err != nil {
-		log.Printf("Hikvision alarm XML parse error: %v", err)
+		log.Printf("Hikvision alarm parse error from %s: %v body=%s", r.RemoteAddr, err, string(body))
 		http.Error(w, "xml parse error", http.StatusBadRequest)
 		return
 	}
