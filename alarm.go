@@ -233,7 +233,7 @@ func (s *AlarmServer) saveEvent(event AlarmEvent) {
 
 func (s *AlarmServer) loadRecentEvents(days int) {
 	now := time.Now()
-	for i := 0; i < days; i++ {
+	for i := days - 1; i >= 0; i-- {
 		date := now.AddDate(0, 0, -i)
 		fileName := date.Format("2006-01-02") + ".jsonl"
 		filePath := filepath.Join(alarmDir, fileName)
