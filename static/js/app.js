@@ -219,13 +219,15 @@ async function renderFileTree(data, camera) {
       const nameSpan = document.createElement('span');
       nameSpan.textContent = file.replace('.mp4', '');
       nameSpan.style.cursor = 'pointer';
-      nameSpan.onclick = (e) => {
+      fileLi.appendChild(nameSpan);
+
+      fileLi.style.cursor = 'pointer';
+      fileLi.onclick = (e) => {
         e.stopPropagation();
         playFile(folder, file);
         document.querySelectorAll('.file-tree .file').forEach(el => el.classList.remove('active'));
         fileLi.classList.add('active');
       };
-      fileLi.appendChild(nameSpan);
 
       fileUl.appendChild(fileLi);
     });
@@ -399,12 +401,6 @@ function renderArchiveFileTree(data) {
       const nameSpan = document.createElement('span');
       nameSpan.textContent = file.replace('.mp4', '');
       nameSpan.style.cursor = 'pointer';
-      nameSpan.onclick = (e) => {
-        e.stopPropagation();
-        playArchiveFile(folder, file);
-        document.querySelectorAll('#archive-file-tree .file').forEach(el => el.classList.remove('active'));
-        fileLi.classList.add('active');
-      };
 
       const delBtn = document.createElement('button');
       delBtn.className = 'btn-icon';
@@ -417,6 +413,15 @@ function renderArchiveFileTree(data) {
 
       fileLi.appendChild(nameSpan);
       fileLi.appendChild(delBtn);
+
+      fileLi.style.cursor = 'pointer';
+      fileLi.onclick = (e) => {
+        e.stopPropagation();
+        playArchiveFile(folder, file);
+        document.querySelectorAll('#archive-file-tree .file').forEach(el => el.classList.remove('active'));
+        fileLi.classList.add('active');
+      };
+
       fileUl.appendChild(fileLi);
     });
 
@@ -428,6 +433,13 @@ function renderArchiveFileTree(data) {
   });
 
   container.appendChild(ul);
+
+  const files = container.querySelectorAll('.file');
+  if (files.length > 1) {
+    files[1].click();
+  } else if (files.length === 1) {
+    files[0].click();
+  }
 }
 
 function playArchiveFile(folder, file) {
@@ -470,6 +482,25 @@ const video = document.getElementById('video-player');
 if (video) {
   video.addEventListener('ended', () => {
     const active = document.querySelector('.file-tree .file.active');
+    if (active) {
+      const prev = active.previousElementSibling;
+      if (prev && prev.classList.contains('file')) {
+        prev.click();
+      } else {
+        const prevFolder = active.closest('ul')?.parentElement?.previousElementSibling;
+        if (prevFolder) {
+          const files = prevFolder.querySelectorAll('.file');
+          if (files.length) files[files.length - 1].click();
+        }
+      }
+    }
+  });
+}
+
+const archiveVideo = document.getElementById('archive-video-player');
+if (archiveVideo) {
+  archiveVideo.addEventListener('ended', () => {
+    const active = document.querySelector('#archive-file-tree .file.active');
     if (active) {
       const prev = active.previousElementSibling;
       if (prev && prev.classList.contains('file')) {
