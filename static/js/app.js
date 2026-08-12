@@ -6,6 +6,8 @@ let currentFolder = '';
 let archiveCamera = '';
 let alarmLogTimer = null;
 let alarmRunning = false;
+let logTimer = null;
+let logLastSince = null;
 
 document.addEventListener('DOMContentLoaded', () => {
   loadTheme();
@@ -37,6 +39,17 @@ function switchTab(tab) {
     if (alarmLogTimer) {
       clearInterval(alarmLogTimer);
       alarmLogTimer = null;
+    }
+  }
+
+  if (tab === 'logs') {
+    logLastSince = null;
+    loadLogs();
+    logTimer = setInterval(loadLogs, 2000);
+  } else {
+    if (logTimer) {
+      clearInterval(logTimer);
+      logTimer = null;
     }
   }
 }
@@ -965,4 +978,96 @@ async function fetchVersion() {
       pill.textContent = data.version;
     }
   } catch (err) {}
+}
+
+async function loadLogs() {
+  try {
+    let url = '/api/logs?limit=500';
+    if (logLastSince) {
+      url += '&since=' + encodeURIComponent(logLastSince);
+    }
+    const resp = await fetch(url);
+    const data = await resp.json();
+    const container = document.getElementById('log-container');
+    if (!container) return;
+
+    if (!data || data.length === 0) {
+      if (container.children.length === 0) {
+        container.innerHTML = '<div class="empty-msg">Нет записей</div>';
+      }
+      return;
+    }
+
+    const wasAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
+
+    const isFirstLoad = !logLastSince;
+
+    if (isFirstLoad) {
+      container.innerHTML = '';
+    }
+
+    const entries = isFirstLoad ? data : data.filter(e => logLastSince && new Date(e.time) > new Date(logLastSince));
+
+    if (entries.length === 0) return;
+
+    const frag = document.createDocumentFragment();
+    entries.forEach(e => {
+      const line = document.createElement('div');
+      line.className = 'log-entry log-level-' + (e.level || 'info').toLowerCase();
+
+      const ts = document.createElement('span');
+      ts.className = 'log-time';
+      const t = new Date(e.time);
+      ts.textContent = t.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '.' + String(t.getMilliseconds()).padStart(3, '0');
+
+      const level = document.createElement('span');
+      level.className = 'log-level-badge log-level-' + (e.level || 'info').toLowerCase();
+      level.textContent = (e.level || 'INFO').padEnd(5);
+
+      const msg = document.createElement('span');
+      msg.className = 'log-message';
+      msg.textContent = e.message;
+
+      line.appendChild(ts);
+      line.appendChild(level);
+      line.appendChild(msg);
+      frag.appendChild(line);
+    });
+
+    container.appendChild(frag);
+
+    const countEl = document.getElementById('log-count');
+    if (countEl) {
+      countEl.textContent = container.children.length + ' записей';
+    }
+
+    logLastSince = data[0].time;
+
+    while (container.children.length > 500) {
+      container.removeChild(container.firstChild);
+    }
+
+    if (wasAtBottom || isFirstLoad) {
+      container.scrollTop = container.scrollHeight;
+    }
+  } catch (err) {
+    console.error('Error loading logs:', err);
+  }
+}
+
+async function clearLogs() {
+  try {
+    await fetch('/api/logs/clear', { method: 'POST' });
+    const container = document.getElementById('log-container');
+    if (container) {
+      container.innerHTML = '<div class="empty-msg">Нет записей</div>';
+    }
+    logLastSince = null;
+    const countEl = document.getElementById('log-count');
+    if (countEl) {
+      countEl.textContent = '0 записей';
+    }
+  } catch (err) {
+    console.error('Error clearing logs:', err);
+  }
 }

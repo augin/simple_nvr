@@ -81,7 +81,9 @@ func main() {
 	recorder := NewRecorder(config)
 	storage := NewStorage(config)
 	alarm := NewAlarmServer(config, ipMap)
-	api := NewAPI(config, *configPath, recorder, storage, alarm)
+	logBuffer := NewLogBuffer(1000)
+	RedirectLogOutput(logBuffer)
+	api := NewAPI(config, *configPath, recorder, storage, alarm, logBuffer)
 
 	go startScheduler(recorder)
 
@@ -145,6 +147,9 @@ func main() {
 	mux.HandleFunc("/api/alarm/log", api.HandleAlarmLog)
 	mux.HandleFunc("/api/alarm/clear", api.HandleAlarmClear)
 	mux.HandleFunc("/api/alarms/range", api.HandleAlarmsRange)
+
+	mux.HandleFunc("/api/logs", api.HandleLogs)
+	mux.HandleFunc("/api/logs/clear", api.HandleLogsClear)
 
 	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

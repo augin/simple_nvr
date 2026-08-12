@@ -14,6 +14,7 @@
       <button class="nav-tab" onclick="switchTab('archive')">Архив</button>
       <button class="nav-tab" onclick="switchTab('monitoring')">Мониторинг</button>
       <button class="nav-tab" onclick="switchTab('alarm')">Тревога</button>
+      <button class="nav-tab" onclick="switchTab('logs')">Логи</button>
       <button class="nav-tab" onclick="switchTab('settings')">Настройки</button>
     </div>
     <button class="theme-toggle" onclick="toggleTheme()" title="Переключить тему">◐</button>
@@ -182,6 +183,25 @@
         </div>
         <div class="card-body">
           <div id="alarm-log" class="alarm-log"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-logs" class="tab-content">
+      <div class="card log-card">
+        <div class="card-header">
+          <h3>Системные логи</h3>
+          <div class="log-controls">
+            <span class="log-count" id="log-count">0 записей</span>
+            <label class="log-autoscroll-label">
+              <input type="checkbox" id="log-autoscroll" checked>
+              <span>Автопрокрутка</span>
+            </label>
+            <button class="btn btn-sm" onclick="clearLogs()">Очистить</button>
+          </div>
+        </div>
+        <div class="card-body log-card-body">
+          <div id="log-container" class="log-container"></div>
         </div>
       </div>
     </section>

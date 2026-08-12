@@ -20,15 +20,17 @@ type API struct {
 	recorder   *Recorder
 	storage    *Storage
 	alarm      *AlarmServer
+	logBuffer  *LogBuffer
 }
 
-func NewAPI(config *NVRConfig, configPath string, recorder *Recorder, storage *Storage, alarm *AlarmServer) *API {
+func NewAPI(config *NVRConfig, configPath string, recorder *Recorder, storage *Storage, alarm *AlarmServer, logBuffer *LogBuffer) *API {
 	return &API{
 		config:     config,
 		configPath: configPath,
 		recorder:   recorder,
 		storage:    storage,
 		alarm:      alarm,
+		logBuffer:  logBuffer,
 	}
 }
 
@@ -554,6 +556,32 @@ func (a *API) HandleAlarmClear(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.alarm.ClearLog()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "cleared"})
+}
+
+func (a *API) HandleLogs(w http.ResponseWriter, r *http.Request) {
+	limit := 500
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	since := r.URL.Query().Get("since")
+
+	logs := a.logBuffer.GetLogs(limit, since)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(logs)
+}
+
+func (a *API) HandleLogsClear(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	a.logBuffer.Clear()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "cleared"})
