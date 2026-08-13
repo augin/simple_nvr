@@ -23,7 +23,7 @@ async function checkAuth() {
 
     if (!data.auth_required) {
       currentUser = null;
-      currentRole = null;
+      currentRole = 'admin';
       showMainUI();
       return;
     }
