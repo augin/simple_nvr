@@ -812,10 +812,8 @@ async function loadSettings() {
 
     document.getElementById('base_dir').value = cfg.base_dir || '';
     document.getElementById('archive_dir').value = cfg.archive_dir || '';
-    document.getElementById('stream_server').value = cfg.stream_server || '';
     document.getElementById('default_camera_limit_gb').value = cfg.default_camera_limit_gb || 90;
     document.getElementById('global_size_gb').value = cfg.global_size_gb || 0;
-    document.getElementById('go2rtc_config_path').value = cfg.go2rtc_config_path || '';
     document.getElementById('http_port').value = cfg.http_port || 8180;
   } catch (err) {
     console.error('Error loading settings:', err);
@@ -828,10 +826,8 @@ async function saveSettings(e) {
   const cfg = {
     base_dir: document.getElementById('base_dir').value,
     archive_dir: document.getElementById('archive_dir').value,
-    stream_server: document.getElementById('stream_server').value,
     default_camera_limit_gb: parseInt(document.getElementById('default_camera_limit_gb').value),
     global_size_gb: parseInt(document.getElementById('global_size_gb').value) || 0,
-    go2rtc_config_path: document.getElementById('go2rtc_config_path').value,
     http_port: parseInt(document.getElementById('http_port').value),
   };
 
@@ -844,6 +840,31 @@ async function saveSettings(e) {
     alert('Настройки сохранены');
   } catch (err) {
     console.error('Error saving settings:', err);
+    alert('Ошибка сохранения');
+  }
+}
+
+function loadCamerasSettings() {
+  document.getElementById('stream_server').value = currentConfig.stream_server || '';
+  document.getElementById('go2rtc_config_path').value = currentConfig.go2rtc_config_path || '';
+}
+
+async function saveCamerasSettings(e) {
+  e.preventDefault();
+  try {
+    const resp = await fetch('/api/config');
+    const cfg = await resp.json();
+    cfg.stream_server = document.getElementById('stream_server').value;
+    cfg.go2rtc_config_path = document.getElementById('go2rtc_config_path').value;
+    await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cfg),
+    });
+    currentConfig = cfg;
+    alert('Настройки сохранены');
+  } catch (err) {
+    console.error('Error saving cameras settings:', err);
     alert('Ошибка сохранения');
   }
 }
@@ -865,6 +886,7 @@ function switchSubTab(tab) {
     loadUsers();
   }
   if (tab === 'cameras') {
+    loadCamerasSettings();
     loadGo2RTCStatus();
     loadCameras();
   }
