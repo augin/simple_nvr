@@ -252,7 +252,11 @@ func (s *UserStore) RequireAuth(next http.Handler) http.Handler {
 		}
 
 		if !s.HasUsers() {
-			next.ServeHTTP(w, r)
+			ctx := context.WithValue(r.Context(), userContextKey, map[string]string{
+				"username": "admin",
+				"role":     "admin",
+			})
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 
