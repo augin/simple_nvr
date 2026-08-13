@@ -1512,7 +1512,7 @@ function initDragAndDrop() {
     e.preventDefault();
     const row = e.target.closest('tr[draggable]');
     if (row) row.classList.remove('drag-over');
-    const toIdx = parseInt(e.dataTransfer.getData('text/plain'));
+    const toIdx = parseInt(row ? row.dataset.idx : -1);
     if (dragFromIdx !== null && !isNaN(toIdx) && dragFromIdx !== toIdx) {
       reorderCamera(dragFromIdx, toIdx);
     }
