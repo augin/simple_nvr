@@ -1634,6 +1634,7 @@ async function runGo2RTCUpdate(url, modal) {
     statusEl.textContent = 'Готово!';
     log('Обновление завершено успешно.');
     progressEl.value = 100;
+    loadGo2RTCStatus();
 
   } catch (err) {
     statusEl.textContent = 'Ошибка';
