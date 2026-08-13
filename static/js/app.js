@@ -1527,27 +1527,87 @@ async function restartGo2RTC() {
   }
 }
 
-async function updateGo2RTC(url) {
-  if (!confirm('Обновить go2rtc до последней версии?')) return;
+function updateGo2RTC(url) {
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.innerHTML = `
+    <div class="modal-card" style="width:420px;">
+      <div class="modal-header">
+        <h3>Обновление go2rtc</h3>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Статус</label>
+          <span id="update-status">Подготовка...</span>
+        </div>
+        <div class="form-group">
+          <progress id="update-progress" value="0" max="100" style="width:100%;"></progress>
+        </div>
+        <div id="update-log" style="margin-top:8px;font-size:12px;color:var(--text-secondary);min-height:60px;white-space:pre-wrap;"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" id="update-close-btn" onclick="this.closest('.modal-overlay').remove(); loadGo2RTCStatus();" style="display:none;">Закрыть</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  runGo2RTCUpdate(url, modal);
+}
+
+async function runGo2RTCUpdate(url, modal) {
+  const statusEl = modal.querySelector('#update-status');
+  const progressEl = modal.querySelector('#update-progress');
+  const logEl = modal.querySelector('#update-log');
+  const closeBtn = modal.querySelector('#update-close-btn');
+
+  function log(msg) {
+    logEl.textContent += msg + '\n';
+    logEl.scrollTop = logEl.scrollHeight;
+  }
 
   try {
+    statusEl.textContent = 'Скачивание...';
+    progressEl.value = 20;
+    log('Скачивание go2rtc...');
+
     const resp = await fetch('/api/go2rtc/update', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url }),
     });
 
+    progressEl.value = 80;
+
     if (!resp.ok) {
       const data = await resp.json();
-      alert(data.error || 'Ошибка обновления');
+      statusEl.textContent = 'Ошибка';
+      log('Ошибка: ' + (data.error || 'неизвестная'));
+      closeBtn.style.display = '';
       return;
     }
 
-    alert('go2rtc обновлён!');
-    loadGo2RTCStatus();
+    statusEl.textContent = 'Остановка go2rtc...';
+    log('Остановка go2rtc...');
+    progressEl.value = 90;
+
+    statusEl.textContent = 'Замена бинарного файла...';
+    log('Замена бинарного файла...');
+
+    statusEl.textContent = 'Перезапуск go2rtc...';
+    log('Перезапуск go2rtc...');
+    progressEl.value = 95;
+
+    statusEl.textContent = 'Готово!';
+    log('Обновление завершено успешно.');
+    progressEl.value = 100;
+
   } catch (err) {
+    statusEl.textContent = 'Ошибка';
+    log('Ошибка: ' + err.message);
     console.error('updateGo2RTC error:', err);
   }
+
+  closeBtn.style.display = '';
 }
 
 function escHtml(s) {
