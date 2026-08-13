@@ -1075,11 +1075,11 @@ func (a *API) handleGo2RTCCamerasGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type cameraInfo struct {
-		Name   string `json:"name"`
-		Type   string `json:"type"`
-		URL    string `json:"url"`
-		IP     string `json:"ip"`
-		Rec    string `json:"rec"`
+		Name    string `json:"name"`
+		Type    string `json:"type"`
+		URL     string `json:"url"`
+		IP      string `json:"ip"`
+		LimitGB int    `json:"limit_gb"`
 		Channel string `json:"channel,omitempty"`
 	}
 
@@ -1093,7 +1093,6 @@ func (a *API) handleGo2RTCCamerasGet(w http.ResponseWriter, r *http.Request) {
 
 		camType := "unknown"
 		ip := ""
-		rec := ""
 		channel := ""
 		if urlStr != "" {
 			if strings.HasPrefix(urlStr, "dvrip://") {
@@ -1106,27 +1105,17 @@ func (a *API) handleGo2RTCCamerasGet(w http.ResponseWriter, r *http.Request) {
 				camType = "isapi"
 			}
 
-		if idx := strings.Index(urlStr, "@"); idx != -1 {
-			parts := urlStr[idx+1:]
-			// strip query params for dvrip URLs
-			if qIdx := strings.Index(parts, "?"); qIdx != -1 {
-				parts = parts[:qIdx]
-			}
-			if colonIdx := strings.Index(parts, ":"); colonIdx != -1 {
-				ip = parts[:colonIdx]
-			} else if slashIdx := strings.Index(parts, "/"); slashIdx != -1 {
-				ip = parts[:slashIdx]
-			} else {
-				ip = parts
-			}
-		}
-
-			if hashIdx := strings.Index(urlStr, "#"); hashIdx != -1 {
-				query := urlStr[hashIdx+1:]
-				for _, part := range strings.Split(query, "&") {
-					if strings.HasPrefix(part, "rec=") {
-						rec = strings.TrimPrefix(part, "rec=")
-					}
+			if idx := strings.Index(urlStr, "@"); idx != -1 {
+				parts := urlStr[idx+1:]
+				if qIdx := strings.Index(parts, "?"); qIdx != -1 {
+					parts = parts[:qIdx]
+				}
+				if colonIdx := strings.Index(parts, ":"); colonIdx != -1 {
+					ip = parts[:colonIdx]
+				} else if slashIdx := strings.Index(parts, "/"); slashIdx != -1 {
+					ip = parts[:slashIdx]
+				} else {
+					ip = parts
 				}
 			}
 
@@ -1140,12 +1129,17 @@ func (a *API) handleGo2RTCCamerasGet(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		limitGB := a.config.DefaultCameraLimitGB
+		if l, ok := a.config.CameraLimits[name]; ok {
+			limitGB = l
+		}
+
 		cameras = append(cameras, cameraInfo{
 			Name:    name,
 			Type:    camType,
 			URL:     urlStr,
 			IP:      ip,
-			Rec:     rec,
+			LimitGB: limitGB,
 			Channel: channel,
 		})
 	}
@@ -1168,7 +1162,7 @@ func (a *API) handleGo2RTCCamerasAdd(w http.ResponseWriter, r *http.Request) {
 		IP      string `json:"ip"`
 		Port    string `json:"port"`
 		Channel string `json:"channel"`
-		Rec     string `json:"rec"`
+		LimitGB int    `json:"limit_gb"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
@@ -1187,21 +1181,13 @@ func (a *API) handleGo2RTCCamerasAdd(w http.ResponseWriter, r *http.Request) {
 		if port == "" {
 			port = "554"
 		}
-		rec := req.Rec
-		if rec == "" {
-			rec = "100"
-		}
-		urlStr = fmt.Sprintf("rtsp://%s:%s@%s:%s/stream0#rec=%s", req.User, req.Pass, req.IP, port, rec)
+		urlStr = fmt.Sprintf("rtsp://%s:%s@%s:%s/stream0", req.User, req.Pass, req.IP, port)
 	case "dvrip":
 		channel := req.Channel
 		if channel == "" {
 			channel = "0"
 		}
-		rec := req.Rec
-		if rec == "" {
-			rec = "100"
-		}
-		urlStr = fmt.Sprintf("dvrip://%s:%s@%s?channel=%s&subtype=0#rec=%s", req.User, req.Pass, req.IP, channel, rec)
+		urlStr = fmt.Sprintf("dvrip://%s:%s@%s?channel=%s&subtype=0", req.User, req.Pass, req.IP, channel)
 	case "onvif":
 		urlStr = fmt.Sprintf("onvif://%s:%s@%s", req.User, req.Pass, req.IP)
 	case "isapi":
@@ -1223,6 +1209,15 @@ func (a *API) handleGo2RTCCamerasAdd(w http.ResponseWriter, r *http.Request) {
 	if err := saveGo2RTCConfig(a.config.Go2RTCConfigPath, go2cfg.Streams); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"save config: %s"}`, err.Error()), http.StatusInternalServerError)
 		return
+	}
+
+	limitGB := req.LimitGB
+	if limitGB <= 0 {
+		limitGB = a.config.DefaultCameraLimitGB
+	}
+	a.config.CameraLimits[req.Name] = limitGB
+	if err := saveNVRConfig(a.configPath, a.config); err != nil {
+		log.Printf("warning: save nvr config: %v", err)
 	}
 
 	exec.Command("systemctl", "restart", "go2rtc").Run()

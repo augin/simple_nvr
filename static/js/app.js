@@ -1408,13 +1408,12 @@ async function loadCameras() {
     tbody.innerHTML = cameras.map(cam => {
       const typeLabels = { rtsp: 'RTSP', dvrip: 'DVR-IP', onvif: 'ONVIF', isapi: 'ISAPI' };
       const typeLabel = typeLabels[cam.type] || cam.type;
-      const rec = cam.rec ? `${cam.rec}%` : '—';
       return `
         <tr>
           <td><strong>${escHtml(cam.name)}</strong></td>
           <td>${typeLabel}</td>
           <td>${escHtml(cam.ip)}</td>
-          <td>${rec}</td>
+          <td>${cam.limit_gb}</td>
           <td class="camera-actions">
             <button class="btn btn-sm btn-danger" onclick="deleteCamera('${escHtml(cam.name)}')">Удалить</button>
           </td>
@@ -1427,6 +1426,7 @@ async function loadCameras() {
 }
 
 function openAddCameraModal() {
+  document.getElementById('cam-rec').value = currentConfig.default_camera_limit_gb || 90;
   document.getElementById('add-camera-modal').style.display = 'flex';
   updateCameraForm();
 }
@@ -1469,7 +1469,7 @@ async function addCamera(e) {
     ip: document.getElementById('cam-ip').value,
     port: document.getElementById('cam-port').value,
     channel: document.getElementById('cam-channel').value,
-    rec: document.getElementById('cam-rec').value,
+    limit_gb: parseInt(document.getElementById('cam-rec').value) || 0,
   };
 
   try {
@@ -1538,7 +1538,7 @@ function updateGo2RTC(url) {
       <div class="modal-body">
         <div class="form-group">
           <label>Статус</label>
-          <span id="update-status">Подготовка...</span>
+          <span id="update-status">Готов к обновлению</span>
         </div>
         <div class="form-group">
           <progress id="update-progress" value="0" max="100" style="width:100%;"></progress>
@@ -1546,11 +1546,18 @@ function updateGo2RTC(url) {
         <div id="update-log" style="margin-top:8px;font-size:12px;color:var(--text-secondary);min-height:60px;white-space:pre-wrap;"></div>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-primary" id="update-close-btn" onclick="this.closest('.modal-overlay').remove(); loadGo2RTCStatus();" style="display:none;">Закрыть</button>
+        <button type="button" class="btn btn-primary" id="update-start-btn" onclick="startGo2RTCUpdate('${url}')">Начать обновление</button>
+        <button type="button" class="btn" id="update-close-btn" onclick="this.closest('.modal-overlay').remove(); loadGo2RTCStatus();">Закрыть</button>
       </div>
     </div>
   `;
   document.body.appendChild(modal);
+}
+
+function startGo2RTCUpdate(url) {
+  const modal = document.querySelector('.modal-overlay');
+  if (!modal) return;
+  modal.querySelector('#update-start-btn').style.display = 'none';
   runGo2RTCUpdate(url, modal);
 }
 

@@ -378,7 +378,7 @@
                   <th>Имя</th>
                   <th>Тип</th>
                   <th>IP</th>
-                  <th>Запись %</th>
+                  <th>Лимит ГБ</th>
                   <th>Действия</th>
                 </tr>
               </thead>
@@ -391,7 +391,7 @@
   </main>
 
   <div id="add-camera-modal" class="modal-overlay" style="display:none;">
-    <div class="modal-card">
+    <div class="modal-card" style="width:520px;max-width:95vw;">
       <div class="modal-header">
         <h3>Добавить камеру</h3>
         <button class="modal-close" onclick="closeAddCameraModal()">&times;</button>
@@ -433,8 +433,8 @@
               <input type="text" id="cam-channel" class="form-input" value="0">
             </div>
             <div class="form-group">
-              <label for="cam-rec">Запись %</label>
-              <input type="text" id="cam-rec" class="form-input" value="100">
+              <label for="cam-rec">Лимит (ГБ)</label>
+              <input type="number" id="cam-rec" class="form-input">
             </div>
           </div>
           <div class="form-actions">
