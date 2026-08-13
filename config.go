@@ -139,3 +139,11 @@ func saveNVRConfig(path string, cfg *NVRConfig) error {
 	}
 	return os.WriteFile(path, data, 0644)
 }
+
+func saveGo2RTCConfig(path string, streams map[string]any) error {
+	data, err := yaml.Marshal(map[string]any{"streams": streams})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}

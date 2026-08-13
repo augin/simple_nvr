@@ -1,6 +1,32 @@
-# Основные настройки
-base_dir: '/mnt/st2/video'
-stream_server: 'rtsp://127.0.0.1:8554'
-default_camera_limit_gb: 90
-global_size_gb: 500
+base_dir: /mnt/st2/video
+archive_dir: /mnt/st2/archive
+stream_server: rtsp://127.0.0.1:8554
+default_camera_limit_gb: 120
+global_size_gb: 1000
 go2rtc_config_path: /opt/go2rtc/go2rtc.yaml
+http_port: 8180
+alarm_enabled: true
+alarm_port: 15002
+hikvision_enabled: true
+hikvision_alarm_port: 15003
+mqtt_host: ""
+mqtt_port: 1883
+mqtt_user: ""
+mqtt_pass: ""
+alarm_command: ""
+camera_limits:
+    kalitka: 120
+    reka_back: 120
+    reka_boilernaya: 120
+    reka_dvor: 120
+    reka_entry: 120
+    reka_kupol: 120
+    reka_podval: 120
+    reka_voda: 120
+    reka_west: 120
+    terrasa: 120
+camera_day_limits:
+    reka_boilernaya: 7
+    reka_podval: 7
+    reka_voda: 7
+users_file: /etc/simple-nvr/users.yaml

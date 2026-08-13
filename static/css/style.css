@@ -1163,3 +1163,103 @@ body {
   gap: 8px;
   margin-top: 16px;
 }
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 0;
+  line-height: 1;
+}
+
+.modal-close:hover {
+  color: var(--text-primary);
+}
+
+.modal-body .form-group {
+  margin-bottom: 12px;
+}
+
+/* Cameras table */
+.cameras-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.cameras-table th {
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-bottom: 2px solid var(--border);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.cameras-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cameras-table tr:hover td {
+  background-color: var(--bg-tertiary);
+}
+
+.camera-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* go2rtc status */
+.go2rtc-info {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.go2rtc-info .info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.go2rtc-info .info-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.go2rtc-info .info-value {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.status-running {
+  color: var(--success);
+}
+
+.status-stopped {
+  color: var(--danger);
+}
+
+.update-banner {
+  padding: 10px 14px;
+  border-radius: 6px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--warning);
+  color: #fff;
+  margin-top: 12px;
+  font-size: 13px;
+}

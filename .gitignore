@@ -2,3 +2,4 @@ nvr
 *.exe
 *.test
 *.prof
+server.log

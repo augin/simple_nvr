@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-var version = "2.7.2"
+var version = "2.8.0"
 
 func findStaticDir() string {
 	exe, err := os.Executable()
@@ -165,6 +165,11 @@ func main() {
 
 	mux.HandleFunc("/api/hikvision/start", api.HandleHikvisionAlarmStart)
 	mux.HandleFunc("/api/hikvision/stop", api.HandleHikvisionAlarmStop)
+
+	mux.HandleFunc("/api/go2rtc/status", api.HandleGo2RTCStatus)
+	mux.HandleFunc("/api/go2rtc/restart", api.HandleGo2RTCRestart)
+	mux.HandleFunc("/api/go2rtc/update", api.HandleGo2RTCUpdate)
+	mux.HandleFunc("/api/go2rtc/cameras", api.HandleGo2RTCCameras)
 
 	mux.HandleFunc("/api/logs", api.HandleLogs)
 	mux.HandleFunc("/api/logs/clear", api.HandleLogsClear)

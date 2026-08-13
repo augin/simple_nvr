@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -902,4 +904,374 @@ func (a *API) HandleChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "password changed"})
+}
+
+func (a *API) HandleGo2RTCStatus(w http.ResponseWriter, r *http.Request) {
+	if !requireAdminRole(r) {
+		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		return
+	}
+
+	status := map[string]any{
+		"config_path": a.config.Go2RTCConfigPath,
+		"running":     false,
+		"version":     "",
+	}
+
+	out, err := exec.Command("systemctl", "is-active", "go2rtc").Output()
+	if err == nil && strings.TrimSpace(string(out)) == "active" {
+		status["running"] = true
+	}
+
+	resp, err := http.Get("http://localhost:1984/api")
+	if err == nil {
+		defer resp.Body.Close()
+		var go2rtcInfo map[string]any
+		if json.NewDecoder(resp.Body).Decode(&go2rtcInfo) == nil {
+			if v, ok := go2rtcInfo["version"].(string); ok {
+				status["version"] = v
+			}
+			if rtsp, ok := go2rtcInfo["rtsp"].(map[string]any); ok {
+				if listen, ok := rtsp["listen"].(string); ok {
+					status["rtsp_listen"] = listen
+				}
+			}
+		}
+	}
+
+	ghResp, err := http.Get("https://api.github.com/repos/AlexxIT/go2rtc/releases/latest")
+	if err == nil {
+		defer ghResp.Body.Close()
+		var release struct {
+			TagName string `json:"tag_name"`
+			Assets  []struct {
+				Name               string `json:"name"`
+				BrowserDownloadURL string `json:"browser_download_url"`
+			} `json:"assets"`
+		}
+		if json.NewDecoder(ghResp.Body).Decode(&release) == nil {
+			latestVersion := strings.TrimPrefix(release.TagName, "v")
+			currentVersion := status["version"].(string)
+			status["latest_version"] = latestVersion
+			status["update_available"] = latestVersion != "" && currentVersion != "" && latestVersion != currentVersion
+			if status["update_available"].(bool) {
+				arch := runtime.GOARCH
+				binaryName := "go2rtc_linux_" + arch
+				for _, asset := range release.Assets {
+					if asset.Name == binaryName {
+						status["update_url"] = asset.BrowserDownloadURL
+						break
+					}
+				}
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(status)
+}
+
+func (a *API) HandleGo2RTCRestart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !requireAdminRole(r) {
+		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		return
+	}
+
+	cmd := exec.Command("systemctl", "restart", "go2rtc")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("go2rtc restart error: %v %s", err, string(out))
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "restarted"})
+}
+
+func (a *API) HandleGo2RTCUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !requireAdminRole(r) {
+		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		return
+	}
+
+	var req struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.URL == "" {
+		http.Error(w, `{"error":"url required"}`, http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("go2rtc update: downloading %s", req.URL)
+
+	httpResp, err := http.Get(req.URL)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"download failed: %s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+	defer httpResp.Body.Close()
+
+	if httpResp.StatusCode != 200 {
+		http.Error(w, fmt.Sprintf(`{"error":"download returned %d"}`, httpResp.StatusCode), http.StatusInternalServerError)
+		return
+	}
+
+	tmpPath := "/usr/bin/go2rtc.tmp"
+	f, err := os.Create(tmpPath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"create temp: %s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+	if _, err := io.Copy(f, httpResp.Body); err != nil {
+		f.Close()
+		os.Remove(tmpPath)
+		http.Error(w, fmt.Sprintf(`{"error":"write temp: %s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+	f.Close()
+	os.Chmod(tmpPath, 0755)
+
+	exec.Command("systemctl", "stop", "go2rtc").Run()
+
+	if err := os.Rename(tmpPath, "/usr/bin/go2rtc"); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"replace binary: %s"}`, err.Error()), http.StatusInternalServerError)
+		exec.Command("systemctl", "start", "go2rtc").Run()
+		return
+	}
+
+	exec.Command("systemctl", "start", "go2rtc").Run()
+
+	log.Printf("go2rtc updated successfully")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+}
+
+func (a *API) HandleGo2RTCCameras(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		a.handleGo2RTCCamerasGet(w, r)
+	case http.MethodPost:
+		a.handleGo2RTCCamerasAdd(w, r)
+	case http.MethodDelete:
+		a.handleGo2RTCCamerasDelete(w, r)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (a *API) handleGo2RTCCamerasGet(w http.ResponseWriter, r *http.Request) {
+	go2cfg, err := loadGo2RTCConfig(a.config.Go2RTCConfigPath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	type cameraInfo struct {
+		Name   string `json:"name"`
+		Type   string `json:"type"`
+		URL    string `json:"url"`
+		IP     string `json:"ip"`
+		Rec    string `json:"rec"`
+		Channel string `json:"channel,omitempty"`
+	}
+
+	cameras := make([]cameraInfo, 0, len(go2cfg.StreamOrder))
+	for _, name := range go2cfg.StreamOrder {
+		urlStr := ""
+		switch v := go2cfg.Streams[name].(type) {
+		case string:
+			urlStr = v
+		}
+
+		camType := "unknown"
+		ip := ""
+		rec := ""
+		channel := ""
+		if urlStr != "" {
+			if strings.HasPrefix(urlStr, "dvrip://") {
+				camType = "dvrip"
+			} else if strings.HasPrefix(urlStr, "rtsp://") {
+				camType = "rtsp"
+			} else if strings.HasPrefix(urlStr, "onvif://") {
+				camType = "onvif"
+			} else if strings.HasPrefix(urlStr, "isapi://") {
+				camType = "isapi"
+			}
+
+		if idx := strings.Index(urlStr, "@"); idx != -1 {
+			parts := urlStr[idx+1:]
+			// strip query params for dvrip URLs
+			if qIdx := strings.Index(parts, "?"); qIdx != -1 {
+				parts = parts[:qIdx]
+			}
+			if colonIdx := strings.Index(parts, ":"); colonIdx != -1 {
+				ip = parts[:colonIdx]
+			} else if slashIdx := strings.Index(parts, "/"); slashIdx != -1 {
+				ip = parts[:slashIdx]
+			} else {
+				ip = parts
+			}
+		}
+
+			if hashIdx := strings.Index(urlStr, "#"); hashIdx != -1 {
+				query := urlStr[hashIdx+1:]
+				for _, part := range strings.Split(query, "&") {
+					if strings.HasPrefix(part, "rec=") {
+						rec = strings.TrimPrefix(part, "rec=")
+					}
+				}
+			}
+
+			if camType == "dvrip" {
+				if idx := strings.Index(urlStr, "channel="); idx != -1 {
+					channel = urlStr[idx+8:]
+					if ampIdx := strings.Index(channel, "&"); ampIdx != -1 {
+						channel = channel[:ampIdx]
+					}
+				}
+			}
+		}
+
+		cameras = append(cameras, cameraInfo{
+			Name:    name,
+			Type:    camType,
+			URL:     urlStr,
+			IP:      ip,
+			Rec:     rec,
+			Channel: channel,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(cameras)
+}
+
+func (a *API) handleGo2RTCCamerasAdd(w http.ResponseWriter, r *http.Request) {
+	if !requireAdminRole(r) {
+		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		return
+	}
+
+	var req struct {
+		Name    string `json:"name"`
+		Type    string `json:"type"`
+		User    string `json:"user"`
+		Pass    string `json:"pass"`
+		IP      string `json:"ip"`
+		Port    string `json:"port"`
+		Channel string `json:"channel"`
+		Rec     string `json:"rec"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+		return
+	}
+
+	if req.Name == "" || req.IP == "" {
+		http.Error(w, `{"error":"name and ip required"}`, http.StatusBadRequest)
+		return
+	}
+
+	var urlStr string
+	switch req.Type {
+	case "rtsp":
+		port := req.Port
+		if port == "" {
+			port = "554"
+		}
+		rec := req.Rec
+		if rec == "" {
+			rec = "100"
+		}
+		urlStr = fmt.Sprintf("rtsp://%s:%s@%s:%s/stream0#rec=%s", req.User, req.Pass, req.IP, port, rec)
+	case "dvrip":
+		channel := req.Channel
+		if channel == "" {
+			channel = "0"
+		}
+		rec := req.Rec
+		if rec == "" {
+			rec = "100"
+		}
+		urlStr = fmt.Sprintf("dvrip://%s:%s@%s?channel=%s&subtype=0#rec=%s", req.User, req.Pass, req.IP, channel, rec)
+	case "onvif":
+		urlStr = fmt.Sprintf("onvif://%s:%s@%s", req.User, req.Pass, req.IP)
+	case "isapi":
+		urlStr = fmt.Sprintf("isapi://%s:%s@%s", req.User, req.Pass, req.IP)
+	default:
+		http.Error(w, `{"error":"unsupported type"}`, http.StatusBadRequest)
+		return
+	}
+
+	go2cfg, err := loadGo2RTCConfig(a.config.Go2RTCConfigPath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	go2cfg.Streams[req.Name] = urlStr
+	go2cfg.StreamOrder = append(go2cfg.StreamOrder, req.Name)
+
+	if err := saveGo2RTCConfig(a.config.Go2RTCConfigPath, go2cfg.Streams); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"save config: %s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	exec.Command("systemctl", "restart", "go2rtc").Run()
+
+	log.Printf("go2rtc: added camera %s (%s)", req.Name, req.Type)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "added"})
+}
+
+func (a *API) handleGo2RTCCamerasDelete(w http.ResponseWriter, r *http.Request) {
+	if !requireAdminRole(r) {
+		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		return
+	}
+
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		http.Error(w, `{"error":"name required"}`, http.StatusBadRequest)
+		return
+	}
+
+	go2cfg, err := loadGo2RTCConfig(a.config.Go2RTCConfigPath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	if _, ok := go2cfg.Streams[name]; !ok {
+		http.Error(w, `{"error":"camera not found"}`, http.StatusNotFound)
+		return
+	}
+
+	delete(go2cfg.Streams, name)
+	newOrder := make([]string, 0, len(go2cfg.StreamOrder)-1)
+	for _, n := range go2cfg.StreamOrder {
+		if n != name {
+			newOrder = append(newOrder, n)
+		}
+	}
+	go2cfg.StreamOrder = newOrder
+
+	if err := saveGo2RTCConfig(a.config.Go2RTCConfigPath, go2cfg.Streams); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"save config: %s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	exec.Command("systemctl", "restart", "go2rtc").Run()
+
+	log.Printf("go2rtc: deleted camera %s", name)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
 }

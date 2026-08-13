@@ -864,6 +864,10 @@ function switchSubTab(tab) {
   if (tab === 'users') {
     loadUsers();
   }
+  if (tab === 'cameras') {
+    loadGo2RTCStatus();
+    loadCameras();
+  }
 }
 
 function formatRecordingTime(fileCount) {
@@ -1333,4 +1337,221 @@ async function changePassword(e, username) {
   } catch (err) {
     console.error('Error changing password:', err);
   }
+}
+
+// go2rtc / Cameras management
+
+async function loadGo2RTCStatus() {
+  try {
+    const resp = await fetch('/api/go2rtc/status');
+    if (!resp.ok) return;
+    const data = await resp.json();
+
+    const statusEl = document.getElementById('go2rtc-status');
+    if (!statusEl) return;
+
+    const running = data.running;
+    const version = data.version || '—';
+    const latest = data.latest_version || '—';
+    const rtsp = data.rtsp_listen || '—';
+
+    statusEl.innerHTML = `
+      <div class="go2rtc-info">
+        <div class="info-item">
+          <span class="info-label">Статус</span>
+          <span class="info-value ${running ? 'status-running' : 'status-stopped'}">${running ? 'Работает' : 'Остановлен'}</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">Версия</span>
+          <span class="info-value">${version}</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">Последняя</span>
+          <span class="info-value">${latest}</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">RTSP</span>
+          <span class="info-value">${rtsp}</span>
+        </div>
+      </div>
+    `;
+
+    const banner = document.getElementById('go2rtc-update-banner');
+    if (banner && data.update_available && data.update_url) {
+      banner.style.display = 'block';
+      banner.innerHTML = `
+        <div class="update-banner">
+          <span>Доступна новая версия go2rtc: ${latest}</span>
+          <button class="btn btn-sm" onclick="updateGo2RTC('${data.update_url}')" style="background:#fff;color:#333;">Обновить</button>
+        </div>
+      `;
+    }
+  } catch (err) {
+    console.error('go2rtc status error:', err);
+  }
+}
+
+async function loadCameras() {
+  try {
+    const resp = await fetch('/api/go2rtc/cameras');
+    if (!resp.ok) return;
+    const cameras = await resp.json();
+
+    const tbody = document.getElementById('cameras-list');
+    if (!tbody) return;
+
+    if (cameras.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty-msg">Нет добавленных камер</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = cameras.map(cam => {
+      const typeLabels = { rtsp: 'RTSP', dvrip: 'DVR-IP', onvif: 'ONVIF', isapi: 'ISAPI' };
+      const typeLabel = typeLabels[cam.type] || cam.type;
+      const rec = cam.rec ? `${cam.rec}%` : '—';
+      return `
+        <tr>
+          <td><strong>${escHtml(cam.name)}</strong></td>
+          <td>${typeLabel}</td>
+          <td>${escHtml(cam.ip)}</td>
+          <td>${rec}</td>
+          <td class="camera-actions">
+            <button class="btn btn-sm btn-danger" onclick="deleteCamera('${escHtml(cam.name)}')">Удалить</button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  } catch (err) {
+    console.error('loadCameras error:', err);
+  }
+}
+
+function openAddCameraModal() {
+  document.getElementById('add-camera-modal').style.display = 'flex';
+  updateCameraForm();
+}
+
+function closeAddCameraModal() {
+  document.getElementById('add-camera-modal').style.display = 'none';
+  document.getElementById('add-camera-form').reset();
+}
+
+function updateCameraForm() {
+  const type = document.getElementById('cam-type').value;
+  const channelGroup = document.getElementById('cam-channel-group');
+  const portInput = document.getElementById('cam-port');
+
+  if (type === 'dvrip') {
+    channelGroup.style.display = '';
+  } else {
+    channelGroup.style.display = 'none';
+  }
+
+  const defaultPorts = { rtsp: '554', dvrip: '34567', onvif: '80', isapi: '80' };
+  portInput.placeholder = defaultPorts[type] || '';
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const typeSelect = document.getElementById('cam-type');
+  if (typeSelect) {
+    typeSelect.addEventListener('change', updateCameraForm);
+  }
+});
+
+async function addCamera(e) {
+  e.preventDefault();
+
+  const body = {
+    name: document.getElementById('cam-name').value,
+    type: document.getElementById('cam-type').value,
+    user: document.getElementById('cam-user').value,
+    pass: document.getElementById('cam-pass').value,
+    ip: document.getElementById('cam-ip').value,
+    port: document.getElementById('cam-port').value,
+    channel: document.getElementById('cam-channel').value,
+    rec: document.getElementById('cam-rec').value,
+  };
+
+  try {
+    const resp = await fetch('/api/go2rtc/cameras', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!resp.ok) {
+      const data = await resp.json();
+      alert(data.error || 'Ошибка добавления камеры');
+      return;
+    }
+
+    closeAddCameraModal();
+    loadCameras();
+  } catch (err) {
+    console.error('addCamera error:', err);
+  }
+}
+
+async function deleteCamera(name) {
+  if (!confirm(`Удалить камеру ${name}?`)) return;
+
+  try {
+    const resp = await fetch(`/api/go2rtc/cameras?name=${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    });
+
+    if (!resp.ok) {
+      const data = await resp.json();
+      alert(data.error || 'Ошибка удаления');
+      return;
+    }
+
+    loadCameras();
+  } catch (err) {
+    console.error('deleteCamera error:', err);
+  }
+}
+
+async function restartGo2RTC() {
+  if (!confirm('Перезапустить go2rtc?')) return;
+
+  try {
+    const resp = await fetch('/api/go2rtc/restart', { method: 'POST' });
+    if (!resp.ok) {
+      alert('Ошибка перезапуска');
+      return;
+    }
+    setTimeout(loadGo2RTCStatus, 1500);
+  } catch (err) {
+    console.error('restartGo2RTC error:', err);
+  }
+}
+
+async function updateGo2RTC(url) {
+  if (!confirm('Обновить go2rtc до последней версии?')) return;
+
+  try {
+    const resp = await fetch('/api/go2rtc/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+
+    if (!resp.ok) {
+      const data = await resp.json();
+      alert(data.error || 'Ошибка обновления');
+      return;
+    }
+
+    alert('go2rtc обновлён!');
+    loadGo2RTCStatus();
+  } catch (err) {
+    console.error('updateGo2RTC error:', err);
+  }
+}
+
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
 }
