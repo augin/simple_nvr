@@ -1481,38 +1481,43 @@ function initDragAndDrop() {
   const tbody = document.getElementById('cameras-list');
   if (!tbody) return;
 
-  tbody.querySelectorAll('tr[draggable]').forEach(row => {
-    row.addEventListener('dragstart', function(e) {
-      dragFromIdx = parseInt(this.dataset.idx);
-      this.classList.add('dragging');
-      e.dataTransfer.effectAllowed = 'move';
-    });
+  tbody.ondragstart = function(e) {
+    const row = e.target.closest('tr[draggable]');
+    if (!row) return;
+    dragFromIdx = parseInt(row.dataset.idx);
+    row.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', row.dataset.idx);
+  };
 
-    row.addEventListener('dragend', function() {
-      this.classList.remove('dragging');
-      tbody.querySelectorAll('tr').forEach(r => r.classList.remove('drag-over'));
-    });
+  tbody.ondragend = function(e) {
+    const row = e.target.closest('tr[draggable]');
+    if (row) row.classList.remove('dragging');
+    tbody.querySelectorAll('tr').forEach(r => r.classList.remove('drag-over'));
+  };
 
-    row.addEventListener('dragover', function(e) {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      this.classList.add('drag-over');
-    });
+  tbody.ondragover = function(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const row = e.target.closest('tr[draggable]');
+    if (row) row.classList.add('drag-over');
+  };
 
-    row.addEventListener('dragleave', function() {
-      this.classList.remove('drag-over');
-    });
+  tbody.ondragleave = function(e) {
+    const row = e.target.closest('tr[draggable]');
+    if (row) row.classList.remove('drag-over');
+  };
 
-    row.addEventListener('drop', function(e) {
-      e.preventDefault();
-      this.classList.remove('drag-over');
-      const toIdx = parseInt(this.dataset.idx);
-      if (dragFromIdx !== null && dragFromIdx !== toIdx) {
-        reorderCamera(dragFromIdx, toIdx);
-      }
-      dragFromIdx = null;
-    });
-  });
+  tbody.ondrop = function(e) {
+    e.preventDefault();
+    const row = e.target.closest('tr[draggable]');
+    if (row) row.classList.remove('drag-over');
+    const toIdx = parseInt(e.dataTransfer.getData('text/plain'));
+    if (dragFromIdx !== null && !isNaN(toIdx) && dragFromIdx !== toIdx) {
+      reorderCamera(dragFromIdx, toIdx);
+    }
+    dragFromIdx = null;
+  };
 }
 
 function openAddCameraModal() {
