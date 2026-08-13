@@ -1372,6 +1372,31 @@ async function loadGo2RTCStatus() {
     const statusEl = document.getElementById('go2rtc-status');
     if (!statusEl) return;
 
+    if (data.install_needed) {
+      statusEl.innerHTML = `
+        <div class="go2rtc-info">
+          <div class="info-item">
+            <span class="info-label">Статус</span>
+            <span class="info-value status-stopped">Не установлен</span>
+          </div>
+        </div>
+      `;
+      const banner = document.getElementById('go2rtc-update-banner');
+      if (banner) {
+        banner.style.display = 'block';
+        banner.innerHTML = `
+          <div class="update-banner" style="background:#e55;">
+            <span>go2rtc не установлен. Он нужен для работы камер.</span>
+            <button class="btn btn-sm" style="background:#fff;color:#333;" id="btn-install-go2rtc">Установить</button>
+          </div>
+        `;
+        document.getElementById('btn-install-go2rtc').onclick = function() {
+          openInstallGo2RTCModal(data.install_url);
+        };
+      }
+      return;
+    }
+
     const running = data.running;
     const version = data.version || '—';
     const latest = data.latest_version || '—';
@@ -1550,6 +1575,102 @@ async function restartGo2RTC() {
 }
 
 let pendingGo2RTCUpdateUrl = '';
+
+function openInstallGo2RTCModal(url) {
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.innerHTML = `
+    <div class="modal-card" style="width:420px;">
+      <div class="modal-header">
+        <h3>Установка go2rtc</h3>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">
+          go2rtc необходим для работы камер. Будет скачана последняя версия, создан systemd-юнит и пустой конфиг.
+        </p>
+        <div class="form-group">
+          <label>Статус</label>
+          <span id="install-status">Готов к установке</span>
+        </div>
+        <div class="form-group">
+          <progress id="install-progress" value="0" max="100" style="width:100%;"></progress>
+        </div>
+        <div id="install-log" style="margin-top:8px;font-size:12px;color:var(--text-secondary);min-height:60px;white-space:pre-wrap;"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" id="install-start-btn">Установить</button>
+        <button type="button" class="btn" id="install-close-btn">Закрыть</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  document.getElementById('install-start-btn').onclick = function() {
+    this.style.display = 'none';
+    runGo2RTCInstall(url, modal);
+  };
+  document.getElementById('install-close-btn').onclick = function() {
+    modal.remove();
+    loadGo2RTCStatus();
+  };
+}
+
+async function runGo2RTCInstall(url, modal) {
+  const statusEl = modal.querySelector('#install-status');
+  const progressEl = modal.querySelector('#install-progress');
+  const logEl = modal.querySelector('#install-log');
+  const closeBtn = modal.querySelector('#install-close-btn');
+
+  function log(msg) {
+    logEl.textContent += msg + '\n';
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  try {
+    statusEl.textContent = 'Скачивание...';
+    progressEl.value = 20;
+    log('Скачивание go2rtc...');
+
+    const resp = await fetch('/api/go2rtc/install', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+
+    progressEl.value = 80;
+
+    if (!resp.ok) {
+      const data = await resp.json();
+      statusEl.textContent = 'Ошибка';
+      log('Ошибка: ' + (data.error || 'неизвестная'));
+      closeBtn.style.display = '';
+      return;
+    }
+
+    statusEl.textContent = 'Создание systemd-юнита...';
+    log('Создание systemd-юнита...');
+    progressEl.value = 90;
+
+    statusEl.textContent = 'Создание конфига...';
+    log('Создание пустого конфига /etc/go2rtc/go2rtc.yaml...');
+
+    statusEl.textContent = 'Запуск go2rtc...';
+    log('Запуск go2rtc...');
+    progressEl.value = 95;
+
+    statusEl.textContent = 'Готово!';
+    log('Установка завершена успешно.');
+    progressEl.value = 100;
+    loadGo2RTCStatus();
+
+  } catch (err) {
+    statusEl.textContent = 'Ошибка';
+    log('Ошибка: ' + err.message);
+    console.error('installGo2RTC error:', err);
+  }
+
+  closeBtn.style.display = '';
+}
 
 function updateGo2RTC(url) {
   pendingGo2RTCUpdateUrl = url;
