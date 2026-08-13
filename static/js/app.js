@@ -1448,31 +1448,71 @@ async function loadCameras() {
     if (!tbody) return;
 
     if (cameras.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" class="empty-msg">Нет добавленных камер</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-msg">Нет добавленных камер</td></tr>';
       return;
     }
 
     tbody.innerHTML = cameras.map((cam, idx) => {
       const typeLabels = { rtsp: 'RTSP', dvrip: 'DVR-IP', onvif: 'ONVIF', isapi: 'ISAPI' };
       const typeLabel = typeLabels[cam.type] || cam.type;
-      const upBtn = idx > 0 ? `<button class="btn btn-sm" onclick="reorderCamera(${idx}, ${idx - 1})" title="Вверх">↑</button>` : '';
-      const downBtn = idx < cameras.length - 1 ? `<button class="btn btn-sm" onclick="reorderCamera(${idx}, ${idx + 1})" title="Вниз">↓</button>` : '';
       return `
-        <tr>
+        <tr draggable="true" data-idx="${idx}">
+          <td class="drag-handle" title="Перетащить">⠿</td>
           <td><strong>${escHtml(cam.name)}</strong></td>
           <td>${typeLabel}</td>
           <td>${escHtml(cam.ip)}</td>
           <td>${cam.limit_gb}</td>
           <td class="camera-actions">
-            ${upBtn}${downBtn}
             <button class="btn btn-sm btn-danger" onclick="deleteCamera('${escHtml(cam.name)}')">Удалить</button>
           </td>
         </tr>
       `;
     }).join('');
+
+    initDragAndDrop();
   } catch (err) {
     console.error('loadCameras error:', err);
   }
+}
+
+let dragFromIdx = null;
+
+function initDragAndDrop() {
+  const tbody = document.getElementById('cameras-list');
+  if (!tbody) return;
+
+  tbody.querySelectorAll('tr[draggable]').forEach(row => {
+    row.addEventListener('dragstart', function(e) {
+      dragFromIdx = parseInt(this.dataset.idx);
+      this.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+
+    row.addEventListener('dragend', function() {
+      this.classList.remove('dragging');
+      tbody.querySelectorAll('tr').forEach(r => r.classList.remove('drag-over'));
+    });
+
+    row.addEventListener('dragover', function(e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      this.classList.add('drag-over');
+    });
+
+    row.addEventListener('dragleave', function() {
+      this.classList.remove('drag-over');
+    });
+
+    row.addEventListener('drop', function(e) {
+      e.preventDefault();
+      this.classList.remove('drag-over');
+      const toIdx = parseInt(this.dataset.idx);
+      if (dragFromIdx !== null && dragFromIdx !== toIdx) {
+        reorderCamera(dragFromIdx, toIdx);
+      }
+      dragFromIdx = null;
+    });
+  });
 }
 
 function openAddCameraModal() {
