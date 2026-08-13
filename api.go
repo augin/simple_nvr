@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type API struct {
@@ -188,6 +191,27 @@ func (a *API) HandleCamerasStorage(w http.ResponseWriter, r *http.Request) {
 func requireAdminRole(r *http.Request) bool {
 	_, role, _ := GetUserFromContext(r)
 	return role == "admin"
+}
+
+func isRTSPReachable(rtspURL string) bool {
+	u, err := url.Parse(rtspURL)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if host == "" {
+		host = u.Host
+	}
+	port := u.Port()
+	if port == "" {
+		port = "554"
+	}
+	conn, err := net.DialTimeout("tcp", host+":"+port, 2*time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 func (a *API) HandleRecordStart(w http.ResponseWriter, r *http.Request) {
@@ -946,6 +970,13 @@ func (a *API) HandleGo2RTCStatus(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
+		}
+	}
+
+	if !binaryExists && a.config.StreamServer != "" {
+		if isRTSPReachable(a.config.StreamServer) {
+			status["running"] = true
+			status["install_needed"] = false
 		}
 	}
 

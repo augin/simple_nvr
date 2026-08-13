@@ -1398,7 +1398,13 @@ async function loadGo2RTCStatus() {
     }
 
     const running = data.running;
-    const version = data.version || '—';
+    const hasBinary = !data.install_needed;
+    let versionDisplay = '—';
+    if (hasBinary && data.version) {
+      versionDisplay = data.version;
+    } else if (!hasBinary && running) {
+      versionDisplay = 'управляется пользователем';
+    }
     const latest = data.latest_version || '—';
     const rtsp = data.rtsp_listen || '—';
 
@@ -1410,7 +1416,7 @@ async function loadGo2RTCStatus() {
         </div>
         <div class="info-item">
           <span class="info-label">Версия</span>
-          <span class="info-value">${version}</span>
+          <span class="info-value">${versionDisplay}</span>
         </div>
         <div class="info-item">
           <span class="info-label">Последняя</span>
