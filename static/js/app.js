@@ -1404,7 +1404,7 @@ async function loadGo2RTCStatus() {
       banner.innerHTML = `
         <div class="update-banner">
           <span>Доступна новая версия go2rtc: ${latest}</span>
-          <button class="btn btn-sm" onclick="updateGo2RTC('${data.update_url}')" style="background:#fff;color:#333;">Обновить</button>
+          <button class="btn btn-sm" data-update-url="${escAttr(data.update_url)}" onclick="updateGo2RTC(this.dataset.updateUrl)" style="background:#fff;color:#333;">Обновить</button>
         </div>
       `;
     }
@@ -1552,6 +1552,7 @@ async function restartGo2RTC() {
 function updateGo2RTC(url) {
   const modal = document.createElement('div');
   modal.className = 'modal-overlay';
+  modal.dataset.updateUrl = url;
   modal.innerHTML = `
     <div class="modal-card" style="width:420px;">
       <div class="modal-header">
@@ -1568,7 +1569,7 @@ function updateGo2RTC(url) {
         <div id="update-log" style="margin-top:8px;font-size:12px;color:var(--text-secondary);min-height:60px;white-space:pre-wrap;"></div>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-primary" id="update-start-btn" onclick="startGo2RTCUpdate('${url}')">Начать обновление</button>
+        <button type="button" class="btn btn-primary" id="update-start-btn" onclick="startGo2RTCUpdate(this.closest('.modal-overlay').dataset.updateUrl)">Начать обновление</button>
         <button type="button" class="btn" id="update-close-btn" onclick="this.closest('.modal-overlay').remove(); loadGo2RTCStatus();">Закрыть</button>
       </div>
     </div>
@@ -1643,4 +1644,8 @@ function escHtml(s) {
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
+}
+
+function escAttr(s) {
+  return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
