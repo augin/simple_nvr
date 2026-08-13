@@ -343,6 +343,31 @@
             </div>
           </div>
         </div>
+
+        <div class="card" style="margin-top:12px;">
+          <div class="card-header">
+            <h3>Режим киоска</h3>
+          </div>
+          <div class="card-body">
+            <div class="form-group">
+              <label for="kiosk_enabled">Включить киоск-режим</label>
+              <div class="toggle-row">
+                <label class="toggle">
+                  <input type="checkbox" id="kiosk_enabled" name="kiosk_enabled" onchange="toggleKiosk()">
+                  <span class="toggle-slider"></span>
+                </label>
+                <span class="toggle-label" id="kiosk-status-text">Выключен</span>
+              </div>
+            </div>
+            <div class="form-group" id="kiosk-port-group" style="display:none;">
+              <label for="kiosk_port">Порт киоска</label>
+              <input type="number" id="kiosk_port" name="kiosk_port" class="form-input" value="8181">
+            </div>
+            <div class="form-actions" id="kiosk-save-group" style="display:none;">
+              <button class="btn btn-primary" onclick="saveKioskSettings()">Сохранить</button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div id="subtab-cameras" class="sub-tab-content">

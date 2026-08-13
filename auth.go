@@ -251,6 +251,15 @@ func (s *UserStore) RequireAuth(next http.Handler) http.Handler {
 			return
 		}
 
+		if r.Header.Get("X-Kiosk-Proxy") == "1" {
+			ctx := context.WithValue(r.Context(), userContextKey, map[string]string{
+				"username": "kiosk",
+				"role":     "user",
+			})
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+
 		if !s.HasUsers() {
 			ctx := context.WithValue(r.Context(), userContextKey, map[string]string{
 				"username": "admin",

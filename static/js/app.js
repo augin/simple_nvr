@@ -18,6 +18,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function checkAuth() {
   try {
+    if (window.__kioskMode) {
+      currentUser = null;
+      currentRole = window.__kioskRole || 'user';
+      showMainUI();
+      return;
+    }
+
     const resp = await fetch('/api/auth/check');
     const data = await resp.json();
 
@@ -815,6 +822,13 @@ async function loadSettings() {
     document.getElementById('default_camera_limit_gb').value = cfg.default_camera_limit_gb || 90;
     document.getElementById('global_size_gb').value = cfg.global_size_gb || 0;
     document.getElementById('http_port').value = cfg.http_port || 8180;
+
+    const kioskEnabled = cfg.kiosk_enabled || false;
+    document.getElementById('kiosk_enabled').checked = kioskEnabled;
+    document.getElementById('kiosk_port').value = cfg.kiosk_port || 8181;
+    document.getElementById('kiosk-port-group').style.display = kioskEnabled ? 'block' : 'none';
+    document.getElementById('kiosk-save-group').style.display = kioskEnabled ? 'flex' : 'none';
+    document.getElementById('kiosk-status-text').textContent = kioskEnabled ? 'Включен' : 'Выключен';
   } catch (err) {
     console.error('Error loading settings:', err);
   }
@@ -1091,6 +1105,33 @@ async function toggleAlarm(type) {
   } catch (err) {
     toggle.checked = !enabled;
     console.error('Error toggling alarm:', err);
+  }
+}
+
+function toggleKiosk() {
+  const enabled = document.getElementById('kiosk_enabled').checked;
+  document.getElementById('kiosk-port-group').style.display = enabled ? 'block' : 'none';
+  document.getElementById('kiosk-save-group').style.display = enabled ? 'flex' : 'none';
+  document.getElementById('kiosk-status-text').textContent = enabled ? 'Включен' : 'Выключен';
+}
+
+async function saveKioskSettings() {
+  const enabled = document.getElementById('kiosk_enabled').checked;
+  const port = parseInt(document.getElementById('kiosk_port').value) || 8181;
+  try {
+    const resp = await fetch('/api/config');
+    const cfg = await resp.json();
+    cfg.kiosk_enabled = enabled;
+    cfg.kiosk_port = port;
+    await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cfg),
+    });
+    alert('Настройки киоска сохранены. Перезапустите сервис для применения.');
+  } catch (err) {
+    console.error('Error saving kiosk settings:', err);
+    alert('Ошибка сохранения');
   }
 }
 

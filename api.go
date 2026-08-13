@@ -302,6 +302,10 @@ func (a *API) HandleSaveConfig(w http.ResponseWriter, r *http.Request) {
 	if cfg.CameraDayLimits != nil {
 		a.config.CameraDayLimits = cfg.CameraDayLimits
 	}
+	a.config.KioskEnabled = cfg.KioskEnabled
+	if cfg.KioskPort > 0 {
+		a.config.KioskPort = cfg.KioskPort
+	}
 
 	if err := saveNVRConfig(a.configPath, a.config); err != nil {
 		log.Printf("Error saving config: %v", err)

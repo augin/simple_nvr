@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-var version = "2.9.7"
+var version = "2.9.8"
 
 func findStaticDir() string {
 	exe, err := os.Executable()
@@ -202,6 +202,13 @@ func main() {
 	addr := fmt.Sprintf(":%d", config.HTTPPort)
 	log.Printf("Server starting on %s", addr)
 	log.Printf("Users file: %s", config.UsersFile)
+
+	if config.KioskEnabled {
+		kiosk := NewKioskServer(config)
+		kiosk.Start()
+		log.Printf("Kiosk mode enabled on port %d", config.KioskPort)
+	}
+
 	log.Fatal(http.ListenAndServe(addr, userStore.RequireAuth(mux)))
 }
 

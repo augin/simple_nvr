@@ -29,6 +29,8 @@ type NVRConfig struct {
 	CameraLimits         map[string]int `yaml:"camera_limits" json:"camera_limits"`
 	CameraDayLimits      map[string]int `yaml:"camera_day_limits" json:"camera_day_limits"`
 	UsersFile            string         `yaml:"users_file" json:"users_file"`
+	KioskEnabled         bool           `yaml:"kiosk_enabled" json:"kiosk_enabled"`
+	KioskPort            int            `yaml:"kiosk_port" json:"kiosk_port"`
 }
 
 type Go2RTCConfig struct {
@@ -68,6 +70,9 @@ func loadNVRConfig(path string) (*NVRConfig, error) {
 	}
 	if cfg.MQTTPort == 0 {
 		cfg.MQTTPort = 1883
+	}
+	if cfg.KioskPort == 0 {
+		cfg.KioskPort = 8181
 	}
 	if cfg.ArchiveDir == "" {
 		cfg.ArchiveDir = cfg.BaseDir + "/archive"
