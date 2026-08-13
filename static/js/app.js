@@ -1549,10 +1549,12 @@ async function restartGo2RTC() {
   }
 }
 
+let pendingGo2RTCUpdateUrl = '';
+
 function updateGo2RTC(url) {
+  pendingGo2RTCUpdateUrl = url;
   const modal = document.createElement('div');
   modal.className = 'modal-overlay';
-  modal.dataset.updateUrl = url;
   modal.innerHTML = `
     <div class="modal-card" style="width:420px;">
       <div class="modal-header">
@@ -1569,19 +1571,21 @@ function updateGo2RTC(url) {
         <div id="update-log" style="margin-top:8px;font-size:12px;color:var(--text-secondary);min-height:60px;white-space:pre-wrap;"></div>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-primary" id="update-start-btn" onclick="startGo2RTCUpdate(this.closest('.modal-overlay').dataset.updateUrl)">Начать обновление</button>
-        <button type="button" class="btn" id="update-close-btn" onclick="this.closest('.modal-overlay').remove(); loadGo2RTCStatus();">Закрыть</button>
+        <button type="button" class="btn btn-primary" id="update-start-btn">Начать обновление</button>
+        <button type="button" class="btn" id="update-close-btn">Закрыть</button>
       </div>
     </div>
   `;
   document.body.appendChild(modal);
-}
 
-function startGo2RTCUpdate(url) {
-  const modal = document.querySelector('.modal-overlay');
-  if (!modal) return;
-  modal.querySelector('#update-start-btn').style.display = 'none';
-  runGo2RTCUpdate(url, modal);
+  document.getElementById('update-start-btn').onclick = function() {
+    this.style.display = 'none';
+    runGo2RTCUpdate(pendingGo2RTCUpdateUrl, modal);
+  };
+  document.getElementById('update-close-btn').onclick = function() {
+    modal.remove();
+    loadGo2RTCStatus();
+  };
 }
 
 async function runGo2RTCUpdate(url, modal) {
