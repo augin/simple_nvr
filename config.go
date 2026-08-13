@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net"
 	"net/url"
 	"os"
@@ -141,13 +142,25 @@ func saveNVRConfig(path string, cfg *NVRConfig) error {
 }
 
 func saveGo2RTCConfig(path string, streams map[string]any, order []string) error {
-	ordered := make(map[string]any, len(order))
+	doc := &yaml.Node{Kind: yaml.DocumentNode}
+	root := &yaml.Node{Kind: yaml.MappingNode}
+	streamsNode := &yaml.Node{Kind: yaml.MappingNode}
+
 	for _, name := range order {
-		if v, ok := streams[name]; ok {
-			ordered[name] = v
+		val, ok := streams[name]
+		if !ok {
+			continue
 		}
+		keyNode := &yaml.Node{Kind: yaml.ScalarNode, Value: name, Tag: "!!str"}
+		valNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: fmt.Sprintf("%v", val)}
+		streamsNode.Content = append(streamsNode.Content, keyNode, valNode)
 	}
-	data, err := yaml.Marshal(map[string]any{"streams": ordered})
+
+	keyStreams := &yaml.Node{Kind: yaml.ScalarNode, Value: "streams", Tag: "!!str"}
+	root.Content = append(root.Content, keyStreams, streamsNode)
+	doc.Content = append(doc.Content, root)
+
+	data, err := yaml.Marshal(doc)
 	if err != nil {
 		return err
 	}
