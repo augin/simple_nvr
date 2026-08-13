@@ -1452,9 +1452,11 @@ async function loadCameras() {
       return;
     }
 
-    tbody.innerHTML = cameras.map(cam => {
+    tbody.innerHTML = cameras.map((cam, idx) => {
       const typeLabels = { rtsp: 'RTSP', dvrip: 'DVR-IP', onvif: 'ONVIF', isapi: 'ISAPI' };
       const typeLabel = typeLabels[cam.type] || cam.type;
+      const upBtn = idx > 0 ? `<button class="btn btn-sm" onclick="reorderCamera(${idx}, ${idx - 1})" title="Вверх">↑</button>` : '';
+      const downBtn = idx < cameras.length - 1 ? `<button class="btn btn-sm" onclick="reorderCamera(${idx}, ${idx + 1})" title="Вниз">↓</button>` : '';
       return `
         <tr>
           <td><strong>${escHtml(cam.name)}</strong></td>
@@ -1462,6 +1464,7 @@ async function loadCameras() {
           <td>${escHtml(cam.ip)}</td>
           <td>${cam.limit_gb}</td>
           <td class="camera-actions">
+            ${upBtn}${downBtn}
             <button class="btn btn-sm btn-danger" onclick="deleteCamera('${escHtml(cam.name)}')">Удалить</button>
           </td>
         </tr>
@@ -1536,6 +1539,26 @@ async function addCamera(e) {
     loadCameras();
   } catch (err) {
     console.error('addCamera error:', err);
+  }
+}
+
+async function reorderCamera(from, to) {
+  try {
+    const resp = await fetch('/api/go2rtc/reorder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from, to }),
+    });
+
+    if (!resp.ok) {
+      const data = await resp.json();
+      alert(data.error || 'Ошибка перемещения');
+      return;
+    }
+
+    loadCameras();
+  } catch (err) {
+    console.error('reorderCamera error:', err);
   }
 }
 

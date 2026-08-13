@@ -171,6 +171,7 @@ func main() {
 	mux.HandleFunc("/api/go2rtc/update", api.HandleGo2RTCUpdate)
 	mux.HandleFunc("/api/go2rtc/install", api.HandleGo2RTCInstall)
 	mux.HandleFunc("/api/go2rtc/cameras", api.HandleGo2RTCCameras)
+	mux.HandleFunc("/api/go2rtc/reorder", api.HandleGo2RTCReorder)
 
 	mux.HandleFunc("/api/logs", api.HandleLogs)
 	mux.HandleFunc("/api/logs/clear", api.HandleLogsClear)

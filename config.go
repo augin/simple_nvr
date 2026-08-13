@@ -140,8 +140,14 @@ func saveNVRConfig(path string, cfg *NVRConfig) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-func saveGo2RTCConfig(path string, streams map[string]any) error {
-	data, err := yaml.Marshal(map[string]any{"streams": streams})
+func saveGo2RTCConfig(path string, streams map[string]any, order []string) error {
+	ordered := make(map[string]any, len(order))
+	for _, name := range order {
+		if v, ok := streams[name]; ok {
+			ordered[name] = v
+		}
+	}
+	data, err := yaml.Marshal(map[string]any{"streams": ordered})
 	if err != nil {
 		return err
 	}

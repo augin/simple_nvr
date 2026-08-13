@@ -1311,7 +1311,7 @@ func (a *API) handleGo2RTCCamerasAdd(w http.ResponseWriter, r *http.Request) {
 	go2cfg.Streams[req.Name] = urlStr
 	go2cfg.StreamOrder = append(go2cfg.StreamOrder, req.Name)
 
-	if err := saveGo2RTCConfig(a.config.Go2RTCConfigPath, go2cfg.Streams); err != nil {
+	if err := saveGo2RTCConfig(a.config.Go2RTCConfigPath, go2cfg.Streams, go2cfg.StreamOrder); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"save config: %s"}`, err.Error()), http.StatusInternalServerError)
 		return
 	}
@@ -1364,7 +1364,7 @@ func (a *API) handleGo2RTCCamerasDelete(w http.ResponseWriter, r *http.Request) 
 	}
 	go2cfg.StreamOrder = newOrder
 
-	if err := saveGo2RTCConfig(a.config.Go2RTCConfigPath, go2cfg.Streams); err != nil {
+	if err := saveGo2RTCConfig(a.config.Go2RTCConfigPath, go2cfg.Streams, go2cfg.StreamOrder); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"save config: %s"}`, err.Error()), http.StatusInternalServerError)
 		return
 	}
@@ -1374,4 +1374,60 @@ func (a *API) handleGo2RTCCamerasDelete(w http.ResponseWriter, r *http.Request) 
 	log.Printf("go2rtc: deleted camera %s", name)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+}
+
+func (a *API) HandleGo2RTCReorder(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !requireAdminRole(r) {
+		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		return
+	}
+
+	var req struct {
+		From int `json:"from"`
+		To   int `json:"to"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+		return
+	}
+
+	go2cfg, err := loadGo2RTCConfig(a.config.Go2RTCConfigPath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	order := go2cfg.StreamOrder
+	if req.From < 0 || req.From >= len(order) || req.To < 0 || req.To >= len(order) {
+		http.Error(w, `{"error":"invalid position"}`, http.StatusBadRequest)
+		return
+	}
+
+	name := order[req.From]
+	newOrder := make([]string, 0, len(order))
+	for i, n := range order {
+		if i == req.From {
+			continue
+		}
+		newOrder = append(newOrder, n)
+	}
+	insertAt := req.To
+	if req.From < req.To {
+		insertAt = req.To
+	}
+	newOrder = append(newOrder[:insertAt], append([]string{name}, newOrder[insertAt:]...)...)
+	go2cfg.StreamOrder = newOrder
+
+	if err := saveGo2RTCConfig(a.config.Go2RTCConfigPath, go2cfg.Streams, go2cfg.StreamOrder); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"save config: %s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("go2rtc: reordered camera %s from %d to %d", name, req.From, req.To)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "reordered"})
 }
