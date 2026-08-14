@@ -1422,7 +1422,7 @@ async function loadGo2RTCStatus() {
     const statusEl = document.getElementById('go2rtc-status');
     if (!statusEl) return;
 
-    if (data.install_needed) {
+    if (data.install_needed && !data.running) {
       statusEl.innerHTML = `
         <div class="go2rtc-info">
           <div class="info-item">

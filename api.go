@@ -980,7 +980,6 @@ func (a *API) HandleGo2RTCStatus(w http.ResponseWriter, r *http.Request) {
 	if !binaryExists && a.config.StreamServer != "" {
 		if isRTSPReachable(a.config.StreamServer) {
 			status["running"] = true
-			status["install_needed"] = false
 		}
 	}
 
