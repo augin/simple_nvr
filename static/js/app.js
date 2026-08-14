@@ -846,20 +846,20 @@ async function loadSettings() {
 async function saveSettings(e) {
   e.preventDefault();
 
-  const cfg = {
-    base_dir: document.getElementById('base_dir').value,
-    archive_dir: document.getElementById('archive_dir').value,
-    default_camera_limit_gb: parseInt(document.getElementById('default_camera_limit_gb').value),
-    global_size_gb: parseInt(document.getElementById('global_size_gb').value) || 0,
-    http_port: parseInt(document.getElementById('http_port').value),
-  };
-
   try {
+    const resp = await fetch(apiUrl('api/config'));
+    const cfg = await resp.json();
+    cfg.base_dir = document.getElementById('base_dir').value;
+    cfg.archive_dir = document.getElementById('archive_dir').value;
+    cfg.default_camera_limit_gb = parseInt(document.getElementById('default_camera_limit_gb').value);
+    cfg.global_size_gb = parseInt(document.getElementById('global_size_gb').value) || 0;
+    cfg.http_port = parseInt(document.getElementById('http_port').value);
     await fetch(apiUrl('api/config'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(cfg),
     });
+    currentConfig = cfg;
     alert('Настройки сохранены');
   } catch (err) {
     console.error('Error saving settings:', err);
