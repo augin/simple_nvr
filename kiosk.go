@@ -40,33 +40,28 @@ func (ks *KioskServer) Start() {
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		raw, err := readFile(templatePath)
-		if err != nil {
-			http.Error(w, "template error", 500)
-			return
-		}
-		injected := strings.Replace(raw,
-			"<head>",
-			"<head>\n<script>document.write('<base href=\"'+window.location.pathname+'\">')</script>\n<script>window.__kioskMode=true;window.__kioskRole='user';</script>", 1)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(injected))
-	})
-
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticPath))))
 
 	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, filepath.Join(staticPath, "favicon.ico"))
 	})
 
-	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Path
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			raw, err := readFile(templatePath)
+			if err != nil {
+				http.Error(w, "template error", 500)
+				return
+			}
+			injected := strings.Replace(raw,
+				"<head>",
+				"<head>\n<script>window.__kioskMode=true;window.__kioskRole='user';</script>", 1)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Write([]byte(injected))
+			return
+		}
 
-		if path == "/api/auth/check" {
+		if r.URL.Path == "/api/auth/check" {
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{"auth_required":false}`))
 			return
