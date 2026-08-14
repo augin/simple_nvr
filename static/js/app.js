@@ -249,7 +249,7 @@ function selectCamera(camera) {
 
 async function fetchFiles(camera) {
   try {
-    const resp = await fetch(`/api/files?camera=${encodeURIComponent(camera)}`);
+    const resp = await fetch(apiUrl(`api/files?camera=${encodeURIComponent(camera)}`));
     const data = await resp.json();
     await renderFileTree(data, camera);
   } catch (err) {
@@ -259,7 +259,7 @@ async function fetchFiles(camera) {
 
 async function fetchAlarmsForDate(camera, date) {
   try {
-    const resp = await fetch(`/api/alarms/range?camera=${encodeURIComponent(camera)}&date=${date}`);
+    const resp = await fetch(apiUrl(`api/alarms/range?camera=${encodeURIComponent(camera)}&date=${date}`));
     return await resp.json();
   } catch (err) {
     return [];
@@ -419,7 +419,7 @@ function playFile(folder, file) {
   currentFolder = folder;
   currentFile = file;
   const video = document.getElementById('video-player');
-  const path = `/api/video/${currentCamera}/${folder}/${file}`;
+  const path = apiUrl(`api/video/${currentCamera}/${folder}/${file}`);
   video.src = path;
   video.load();
   video.onloadedmetadata = () => {
@@ -449,7 +449,7 @@ async function downloadClip() {
   const from = parseTime(document.getElementById('dl-from').value) - fileStartSec;
   const to = parseTime(document.getElementById('dl-to').value) - fileStartSec;
   if (to <= from || from < 0) return;
-  const url = `/api/download?camera=${encodeURIComponent(currentCamera)}&folder=${encodeURIComponent(currentFolder)}&file=${encodeURIComponent(currentFile)}&start=${from}&end=${to}`;
+  const url = apiUrl(`api/download?camera=${encodeURIComponent(currentCamera)}&folder=${encodeURIComponent(currentFolder)}&file=${encodeURIComponent(currentFile)}&start=${from}&end=${to}`);
   const a = document.createElement('a');
   a.href = url;
   a.download = '';
@@ -483,7 +483,7 @@ async function fetchArchiveCameras() {
 
     const checks = cameras.map(async (camera) => {
       try {
-        const r = await fetch(`/api/archive?camera=${encodeURIComponent(camera)}`);
+        const r = await fetch(apiUrl(`api/archive?camera=${encodeURIComponent(camera)}`));
         const d = await r.json();
         if (Object.keys(d).length > 0) return camera;
       } catch (e) {}
@@ -520,7 +520,7 @@ function selectArchiveCamera(camera) {
 
 async function fetchArchiveFiles(camera) {
   try {
-    const resp = await fetch(`/api/archive?camera=${encodeURIComponent(camera)}`);
+    const resp = await fetch(apiUrl(`api/archive?camera=${encodeURIComponent(camera)}`));
     const data = await resp.json();
     renderArchiveFileTree(data);
   } catch (err) {
@@ -596,7 +596,7 @@ function renderArchiveFileTree(data) {
 
 function playArchiveFile(folder, file) {
   const video = document.getElementById('archive-video-player');
-  const path = `/api/archive/video/${archiveCamera}/${folder}/${file}`;
+  const path = apiUrl(`api/archive/video/${archiveCamera}/${folder}/${file}`);
   video.src = path;
   video.load();
   video.onloadedmetadata = () => {
@@ -608,7 +608,7 @@ function playArchiveFile(folder, file) {
 async function deleteArchiveFile(folder, file, element) {
   if (!confirm('Удалить файл?')) return;
   try {
-    const resp = await fetch(`/api/archive/delete?camera=${encodeURIComponent(archiveCamera)}&folder=${encodeURIComponent(folder)}&file=${encodeURIComponent(file)}`, { method: 'POST' });
+    const resp = await fetch(apiUrl(`api/archive/delete?camera=${encodeURIComponent(archiveCamera)}&folder=${encodeURIComponent(folder)}&file=${encodeURIComponent(file)}`), { method: 'POST' });
     if (resp.ok) {
       const li = element;
       const ul = li.parentElement;
@@ -1351,7 +1351,7 @@ async function deleteUser(username) {
   if (!confirm(`Удалить пользователя ${username}?`)) return;
 
   try {
-    const resp = await fetch(`/api/users?username=${encodeURIComponent(username)}`, {
+    const resp = await fetch(apiUrl(`api/users?username=${encodeURIComponent(username)}`), {
       method: 'DELETE',
     });
 
@@ -1667,7 +1667,7 @@ async function deleteCamera(name) {
   if (!confirm(`Удалить камеру ${name}?`)) return;
 
   try {
-    const resp = await fetch(`/api/go2rtc/cameras?name=${encodeURIComponent(name)}`, {
+    const resp = await fetch(apiUrl(`api/go2rtc/cameras?name=${encodeURIComponent(name)}`), {
       method: 'DELETE',
     });
 
