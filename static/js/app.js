@@ -25,7 +25,7 @@ async function checkAuth() {
       return;
     }
 
-    const resp = await fetch('/api/auth/check');
+    const resp = await fetch('api/auth/check');
     const data = await resp.json();
 
     if (!data.auth_required) {
@@ -102,7 +102,7 @@ async function doLogin(e) {
   const errorEl = document.getElementById('login-error');
 
   try {
-    const resp = await fetch('/api/auth/login', {
+    const resp = await fetch('api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
@@ -126,7 +126,7 @@ async function doLogin(e) {
 }
 
 async function doLogout() {
-  await fetch('/api/auth/logout', { method: 'POST' });
+  await fetch('api/auth/logout', { method: 'POST' });
   currentUser = null;
   currentRole = null;
 
@@ -200,7 +200,7 @@ function loadTheme() {
 
 async function fetchCameras() {
   try {
-    const resp = await fetch('/api/cameras');
+    const resp = await fetch('api/cameras');
     const data = await resp.json();
     const container = document.getElementById('camera-list');
     container.innerHTML = '';
@@ -461,7 +461,7 @@ function setSpeed(speed) {
 
 async function fetchArchiveCameras() {
   try {
-    const resp = await fetch('/api/cameras');
+    const resp = await fetch('api/cameras');
     const data = await resp.json();
     const container = document.getElementById('archive-camera-list');
     container.innerHTML = '';
@@ -755,7 +755,7 @@ function initVideoZoom(videoId) {
 
 async function fetchStatus() {
   try {
-    const resp = await fetch('/api/status');
+    const resp = await fetch('api/status');
     const data = await resp.json();
 
     const indicator = document.getElementById('recording-indicator');
@@ -813,7 +813,7 @@ async function fetchStatus() {
 
 async function loadSettings() {
   try {
-    const resp = await fetch('/api/config');
+    const resp = await fetch('api/config');
     const cfg = await resp.json();
     currentConfig = cfg;
 
@@ -846,7 +846,7 @@ async function saveSettings(e) {
   };
 
   try {
-    await fetch('/api/config', {
+    await fetch('api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(cfg),
@@ -866,11 +866,11 @@ function loadCamerasSettings() {
 async function saveCamerasSettings(e) {
   e.preventDefault();
   try {
-    const resp = await fetch('/api/config');
+    const resp = await fetch('api/config');
     const cfg = await resp.json();
     cfg.stream_server = document.getElementById('stream_server').value;
     cfg.go2rtc_config_path = document.getElementById('go2rtc_config_path').value;
-    await fetch('/api/config', {
+    await fetch('api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(cfg),
@@ -922,9 +922,9 @@ function formatRecordingTime(fileCount) {
 async function loadCameraLimits() {
   try {
     const [configResp, camerasResp, storageResp] = await Promise.all([
-      fetch('/api/config'),
-      fetch('/api/cameras'),
-      fetch('/api/storage/cameras'),
+      fetch('api/config'),
+      fetch('api/cameras'),
+      fetch('api/storage/cameras'),
     ]);
 
     const cfg = await configResp.json();
@@ -1045,12 +1045,12 @@ async function saveCameraLimits() {
   });
 
   try {
-    const resp = await fetch('/api/config');
+    const resp = await fetch('api/config');
     const cfg = await resp.json();
     cfg.camera_limits = cameraLimits;
     cfg.camera_day_limits = cameraDayLimits;
 
-    await fetch('/api/config', {
+    await fetch('api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(cfg),
@@ -1064,7 +1064,7 @@ async function saveCameraLimits() {
 
 async function loadAlarmStatus() {
   try {
-    const resp = await fetch('/api/alarm/status');
+    const resp = await fetch('api/alarm/status');
     const data = await resp.json();
 
     const dahua = data.dahua || {};
@@ -1096,8 +1096,8 @@ async function toggleAlarm(type) {
   const toggleId = type === 'hikvision' ? 'hikvision-toggle' : 'alarm-toggle';
   const toggle = document.getElementById(toggleId);
   const enabled = toggle.checked;
-  const startUrl = type === 'hikvision' ? '/api/hikvision/start' : '/api/alarm/start';
-  const stopUrl = type === 'hikvision' ? '/api/hikvision/stop' : '/api/alarm/stop';
+  const startUrl = type === 'hikvision' ? 'api/hikvision/start' : 'api/alarm/start';
+  const stopUrl = type === 'hikvision' ? 'api/hikvision/stop' : 'api/alarm/stop';
   const url = enabled ? startUrl : stopUrl;
   try {
     await fetch(url, { method: 'POST' });
@@ -1119,11 +1119,11 @@ async function saveKioskSettings() {
   const enabled = document.getElementById('kiosk_enabled').checked;
   const port = parseInt(document.getElementById('kiosk_port').value) || 8181;
   try {
-    const resp = await fetch('/api/config');
+    const resp = await fetch('api/config');
     const cfg = await resp.json();
     cfg.kiosk_enabled = enabled;
     cfg.kiosk_port = port;
-    await fetch('/api/config', {
+    await fetch('api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(cfg),
@@ -1137,7 +1137,7 @@ async function saveKioskSettings() {
 
 async function loadAlarmLog() {
   try {
-    const resp = await fetch('/api/alarm/log?limit=100');
+    const resp = await fetch('api/alarm/log?limit=100');
     const data = await resp.json();
     const container = document.getElementById('alarm-log');
     if (!container) return;
@@ -1169,7 +1169,7 @@ async function loadAlarmLog() {
 
 async function clearAlarmLog() {
   try {
-    await fetch('/api/alarm/clear', { method: 'POST' });
+    await fetch('api/alarm/clear', { method: 'POST' });
     loadAlarmLog();
   } catch (err) {
     console.error('Error clearing alarm log:', err);
@@ -1178,7 +1178,7 @@ async function clearAlarmLog() {
 
 async function fetchVersion() {
   try {
-    const resp = await fetch('/api/version');
+    const resp = await fetch('api/version');
     const data = await resp.json();
     const pill = document.getElementById('version-pill');
     if (pill && data.version) {
@@ -1189,7 +1189,7 @@ async function fetchVersion() {
 
 async function loadLogs() {
   try {
-    let url = '/api/logs?limit=500';
+    let url = 'api/logs?limit=500';
     if (logLastSince) {
       url += '&since=' + encodeURIComponent(logLastSince);
     }
@@ -1265,7 +1265,7 @@ async function loadLogs() {
 
 async function clearLogs() {
   try {
-    await fetch('/api/logs/clear', { method: 'POST' });
+    await fetch('api/logs/clear', { method: 'POST' });
     const container = document.getElementById('log-container');
     if (container) {
       container.innerHTML = '<div class="empty-msg">Нет записей</div>';
@@ -1282,7 +1282,7 @@ async function clearLogs() {
 
 async function loadUsers() {
   try {
-    const resp = await fetch('/api/users');
+    const resp = await fetch('api/users');
     const users = await resp.json();
     const container = document.getElementById('users-list');
     if (!container) return;
@@ -1318,7 +1318,7 @@ async function addUser(e) {
   const role = document.getElementById('new-role').value;
 
   try {
-    const resp = await fetch('/api/users', {
+    const resp = await fetch('api/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password, role }),
@@ -1384,7 +1384,7 @@ async function changePassword(e, username) {
   const newPass = document.getElementById('change-pass-new').value;
 
   try {
-    const resp = await fetch('/api/users/change-password', {
+    const resp = await fetch('api/users/change-password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, new_password: newPass }),
@@ -1406,7 +1406,7 @@ async function changePassword(e, username) {
 
 async function loadGo2RTCStatus() {
   try {
-    const resp = await fetch('/api/go2rtc/status');
+    const resp = await fetch('api/go2rtc/status');
     if (!resp.ok) return;
     const data = await resp.json();
 
@@ -1487,7 +1487,7 @@ async function loadGo2RTCStatus() {
 
 async function loadCameras() {
   try {
-    const resp = await fetch('/api/go2rtc/cameras');
+    const resp = await fetch('api/go2rtc/cameras');
     if (!resp.ok) return;
     const cameras = await resp.json();
 
@@ -1615,7 +1615,7 @@ async function addCamera(e) {
   };
 
   try {
-    const resp = await fetch('/api/go2rtc/cameras', {
+    const resp = await fetch('api/go2rtc/cameras', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -1636,7 +1636,7 @@ async function addCamera(e) {
 
 async function reorderCamera(from, to) {
   try {
-    const resp = await fetch('/api/go2rtc/reorder', {
+    const resp = await fetch('api/go2rtc/reorder', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ from, to }),
@@ -1678,7 +1678,7 @@ async function restartGo2RTC() {
   if (!confirm('Перезапустить go2rtc?')) return;
 
   try {
-    const resp = await fetch('/api/go2rtc/restart', { method: 'POST' });
+    const resp = await fetch('api/go2rtc/restart', { method: 'POST' });
     if (!resp.ok) {
       alert('Ошибка перезапуска');
       return;
@@ -1746,7 +1746,7 @@ async function runGo2RTCInstall(url, modal) {
     progressEl.value = 20;
     log('Скачивание go2rtc...');
 
-    const resp = await fetch('/api/go2rtc/install', {
+    const resp = await fetch('api/go2rtc/install', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url }),
@@ -1840,7 +1840,7 @@ async function runGo2RTCUpdate(url, modal) {
     progressEl.value = 20;
     log('Скачивание go2rtc...');
 
-    const resp = await fetch('/api/go2rtc/update', {
+    const resp = await fetch('api/go2rtc/update', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url }),
