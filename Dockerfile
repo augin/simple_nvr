@@ -12,5 +12,8 @@ COPY --from=builder /nvr /usr/bin/simple-nvr
 COPY templates/ /usr/share/simple-nvr/templates/
 COPY static/ /usr/share/simple-nvr/static/
 EXPOSE 8180
+EXPOSE 8181
+RUN mkdir -p /etc/simple-nvr
+COPY nvr.docker.yaml /etc/simple-nvr/nvr.yaml
 VOLUME /etc/simple-nvr
 CMD ["simple-nvr", "--config", "/etc/simple-nvr/nvr.yaml", "--static-dir", "/usr/share/simple-nvr"]
