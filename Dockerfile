@@ -13,7 +13,7 @@ COPY templates/ /usr/share/simple-nvr/templates/
 COPY static/ /usr/share/simple-nvr/static/
 EXPOSE 8180
 EXPOSE 8181
-RUN mkdir -p /etc/simple-nvr
-COPY nvr.docker.yaml /etc/simple-nvr/nvr.yaml
-VOLUME /etc/simple-nvr
-CMD ["simple-nvr", "--config", "/etc/simple-nvr/nvr.yaml", "--static-dir", "/usr/share/simple-nvr"]
+RUN mkdir -p /config
+COPY nvr.docker.yaml /config/nvr.yaml
+VOLUME /config
+CMD ["simple-nvr", "--config", "/config/nvr.yaml", "--static-dir", "/usr/share/simple-nvr"]
