@@ -3,3 +3,4 @@ nvr
 *.test
 *.prof
 server.log
+.opencode/
