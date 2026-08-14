@@ -52,7 +52,7 @@ func (ks *KioskServer) Start() {
 		}
 		injected := strings.Replace(raw,
 			"<head>",
-			"<head>\n<script>window.__kioskMode=true;window.__kioskRole='user';</script>", 1)
+			"<head>\n<script>document.write('<base href=\"'+window.location.pathname+'\">')</script>\n<script>window.__kioskMode=true;window.__kioskRole='user';</script>", 1)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write([]byte(injected))
 	})
@@ -69,11 +69,6 @@ func (ks *KioskServer) Start() {
 		if path == "/api/auth/check" {
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{"auth_required":false}`))
-			return
-		}
-		if path == "/api/version" {
-			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"version":"kiosk"}`))
 			return
 		}
 
