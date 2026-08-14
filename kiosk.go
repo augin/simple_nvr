@@ -52,7 +52,7 @@ func (ks *KioskServer) Start() {
 		}
 		injected := strings.Replace(raw,
 			"<head>",
-			"<head>\n<script>window.__kioskMode=true;window.__kioskRole='user';</script>", 1)
+			"<head>\n<base href=\"/\">\n<script>window.__kioskMode=true;window.__kioskRole='user';</script>", 1)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write([]byte(injected))
 	})
