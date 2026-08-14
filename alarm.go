@@ -515,6 +515,11 @@ func (s *HikvisionAlarmServer) Start() error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/hikvision/alarm", s.handleAlarm)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(io.LimitReader(r.Body, 1024*1024))
+		log.Printf("Hikvision unknown path: %s %s from %s body=%s", r.Method, r.URL.Path, r.RemoteAddr, string(body))
+		http.NotFound(w, r)
+	})
 
 	addr := fmt.Sprintf(":%d", s.config.HikvisionAlarmPort)
 	s.server = &http.Server{Addr: addr, Handler: mux}
@@ -549,6 +554,8 @@ func (s *HikvisionAlarmServer) GetStatus() map[string]any {
 }
 
 func (s *HikvisionAlarmServer) handleAlarm(w http.ResponseWriter, r *http.Request) {
+	log.Printf("Hikvision alarm: %s %s from %s headers=%v", r.Method, r.URL.Path, r.RemoteAddr, r.Header)
+
 	if r.Method != http.MethodPost {
 		log.Printf("Hikvision alarm: unexpected %s from %s", r.Method, r.RemoteAddr)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -557,10 +564,12 @@ func (s *HikvisionAlarmServer) handleAlarm(w http.ResponseWriter, r *http.Reques
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1024*1024))
 	if err != nil {
-		log.Printf("Hikvision alarm read error: %v", err)
+		log.Printf("Hikvision alarm read error from %s: %v", r.RemoteAddr, err)
 		http.Error(w, "read error", http.StatusBadRequest)
 		return
 	}
+
+	log.Printf("Hikvision alarm body from %s (%d bytes): %s", r.RemoteAddr, len(body), string(body))
 
 	var hEvent HikvisionEvent
 	if err := xml.Unmarshal(body, &hEvent); err != nil {
