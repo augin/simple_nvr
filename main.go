@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -124,8 +125,14 @@ func main() {
 			http.NotFound(w, r)
 			return
 		}
+		data, err := os.ReadFile(templatePath)
+		if err != nil {
+			http.Error(w, "template error", http.StatusInternalServerError)
+			return
+		}
+		html := strings.ReplaceAll(string(data), "{{VERSION}}", version)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		http.ServeFile(w, r, templatePath)
+		w.Write([]byte(html))
 	})
 
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticPath))))

@@ -1383,6 +1383,8 @@ func (a *API) handleGo2RTCCamerasAdd(w http.ResponseWriter, r *http.Request) {
 		log.Printf("go2rtc restart error after adding camera %s: %v", req.Name, err)
 	}
 
+	a.recorder.StartRecordingStream(req.Name)
+
 	log.Printf("go2rtc: added camera %s (%s)", req.Name, req.Type)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "added"})
@@ -1428,6 +1430,8 @@ func (a *API) handleGo2RTCCamerasDelete(w http.ResponseWriter, r *http.Request) 
 	if err := a.restartGo2RTC(); err != nil {
 		log.Printf("go2rtc restart error after deleting camera %s: %v", name, err)
 	}
+
+	a.recorder.StopRecordingStream(name)
 
 	log.Printf("go2rtc: deleted camera %s", name)
 	w.Header().Set("Content-Type", "application/json")

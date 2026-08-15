@@ -181,6 +181,48 @@ func gracefulStop(cmd *exec.Cmd, grace time.Duration) {
 	}
 }
 
+func (r *Recorder) StartRecordingStream(name string) {
+	dur := r.duration
+
+	now := time.Now()
+	year := now.Format("2006")
+	month := now.Format("01")
+	day := now.Format("02")
+	currentTime := now.Format("15-04")
+
+	r.mu.Lock()
+	r.active = true
+	r.epoch++
+	myEpoch := r.epoch
+	r.mu.Unlock()
+
+	go r.recordStream(name, year, month, day, currentTime, dur, myEpoch)
+
+	go func() {
+		time.Sleep(time.Duration(dur) * time.Second)
+		r.mu.Lock()
+		if r.epoch == myEpoch {
+			r.active = false
+		}
+		r.mu.Unlock()
+	}()
+}
+
+func (r *Recorder) StopRecordingStream(name string) {
+	r.mu.Lock()
+	cmd, ok := r.processes[name]
+	if ok {
+		delete(r.processes, name)
+		delete(r.streamInfo, name)
+	}
+	r.mu.Unlock()
+
+	if ok && cmd != nil && cmd.Process != nil {
+		log.Printf("Stopping recording stream %s (PID %d)", name, cmd.Process.Pid)
+		gracefulStop(cmd, 5*time.Second)
+	}
+}
+
 func (r *Recorder) StopRecording() {
 	r.mu.Lock()
 	cmds := make([]*exec.Cmd, 0, len(r.processes))
