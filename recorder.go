@@ -302,3 +302,15 @@ func (r *Recorder) GetStatus() map[string]any {
 		"processes": info,
 	}
 }
+
+func (r *Recorder) ActiveRecordings() map[string]bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	paths := make(map[string]bool, len(r.streamInfo))
+	for _, s := range r.streamInfo {
+		if s.Output != "" {
+			paths[s.Output] = true
+		}
+	}
+	return paths
+}

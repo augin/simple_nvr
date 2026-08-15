@@ -437,8 +437,10 @@
           </div>
         </div>
         <div class="card-body">
-          <div id="scan-status" style="display:none;">
-            <p id="scan-status-text"></p>
+          <div id="scan-progress" style="display:none;">
+            <p id="scan-progress-text" style="margin-bottom:8px;"></p>
+            <progress id="scan-bar" value="0" max="100" style="width:100%;height:20px;"></progress>
+            <p id="scan-current" style="margin-top:8px;font-size:0.85em;color:var(--text-secondary);"></p>
           </div>
           <div id="scan-results" style="display:none;">
             <p><span id="scan-total"></span> файлов проверено, <span id="scan-broken-count"></span> битых</p>

@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-var version = "2.11.0"
+var version = "2.11.1"
 
 func findStaticDir() string {
 	exe, err := os.Executable()
@@ -183,7 +183,8 @@ func main() {
 	mux.HandleFunc("/api/logs", api.HandleLogs)
 	mux.HandleFunc("/api/logs/clear", api.HandleLogsClear)
 
-	mux.HandleFunc("/api/tools/scan", api.HandleToolsScan)
+	mux.HandleFunc("/api/tools/scan", api.HandleToolsScanStart)
+	mux.HandleFunc("/api/tools/scan/status", api.HandleToolsScanStatus)
 	mux.HandleFunc("/api/tools/repair", api.HandleToolsRepair)
 
 	mux.HandleFunc("/api/auth/login", api.HandleLogin)

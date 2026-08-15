@@ -1902,61 +1902,108 @@ function escAttr(s) {
   return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+let scanPollTimer = null;
+
 async function scanVideos() {
   const btn = document.getElementById('btn-scan');
-  const statusEl = document.getElementById('scan-status');
-  const statusText = document.getElementById('scan-status-text');
+  const progressEl = document.getElementById('scan-progress');
+  const progressText = document.getElementById('scan-progress-text');
+  const progressBar = document.getElementById('scan-bar');
+  const scanCurrent = document.getElementById('scan-current');
   const resultsEl = document.getElementById('scan-results');
   const resultsBody = document.getElementById('scan-results-body');
   const totalEl = document.getElementById('scan-total');
   const brokenCountEl = document.getElementById('scan-broken-count');
 
+  if (scanPollTimer) { clearInterval(scanPollTimer); scanPollTimer = null; }
+
   btn.disabled = true;
   btn.textContent = 'Проверка...';
-  statusEl.style.display = '';
-  statusText.textContent = 'Сканирование видеофайлов...';
+  progressEl.style.display = '';
   resultsEl.style.display = 'none';
+  progressText.textContent = 'Запуск сканирования...';
+  progressBar.value = 0;
+  scanCurrent.textContent = '';
 
   try {
     const resp = await fetch(apiUrl('api/tools/scan'), { method: 'POST' });
     const data = await resp.json();
+    if (data.status !== 'started' && data.status !== 'already running') {
+      progressText.textContent = 'Ошибка запуска';
+      btn.disabled = false;
+      btn.textContent = 'Сканировать';
+      return;
+    }
+  } catch (err) {
+    progressText.textContent = 'Ошибка: ' + err.message;
+    btn.disabled = false;
+    btn.textContent = 'Сканировать';
+    return;
+  }
 
-    if (data.error) {
-      statusText.textContent = 'Ошибка: ' + data.error;
+  scanPollTimer = setInterval(pollScan, 1000);
+}
+
+async function pollScan() {
+  const btn = document.getElementById('btn-scan');
+  const progressEl = document.getElementById('scan-progress');
+  const progressText = document.getElementById('scan-progress-text');
+  const progressBar = document.getElementById('scan-bar');
+  const scanCurrent = document.getElementById('scan-current');
+  const resultsEl = document.getElementById('scan-results');
+  const resultsBody = document.getElementById('scan-results-body');
+  const totalEl = document.getElementById('scan-total');
+  const brokenCountEl = document.getElementById('scan-broken-count');
+
+  try {
+    const resp = await fetch(apiUrl('api/tools/scan/status'));
+    const data = await resp.json();
+
+    if (!data.running) {
+      clearInterval(scanPollTimer);
+      scanPollTimer = null;
+
+      progressEl.style.display = 'none';
+      resultsEl.style.display = '';
+
+      if (data.error) {
+        totalEl.textContent = '0';
+        brokenCountEl.textContent = '0';
+        resultsBody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-secondary);">Ошибка: ${escHtml(data.error)}</td></tr>`;
+      } else {
+        totalEl.textContent = data.total;
+        brokenCountEl.textContent = data.broken;
+        resultsBody.innerHTML = '';
+        if (!data.results || data.results.length === 0) {
+          resultsBody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-secondary);">Все файлы в порядке</td></tr>';
+        } else {
+          for (const f of data.results) {
+            const sizeMB = (f.size / 1048576).toFixed(1);
+            const shortErr = f.error.length > 120 ? f.error.substring(0, 120) + '...' : f.error;
+            resultsBody.innerHTML += `
+              <tr>
+                <td>${escHtml(f.camera)}</td>
+                <td>${escHtml(f.date)}</td>
+                <td>${escHtml(f.file)}</td>
+                <td>${sizeMB} МБ</td>
+                <td><small title="${escAttr(f.error)}">${escHtml(shortErr)}</small></td>
+                <td><button class="btn btn-sm btn-primary" onclick="repairVideo('${escAttr(f.path)}', this)">Починить</button></td>
+              </tr>`;
+          }
+        }
+      }
+
       btn.disabled = false;
       btn.textContent = 'Сканировать';
       return;
     }
 
-    statusEl.style.display = 'none';
-    resultsEl.style.display = '';
-    totalEl.textContent = data.total;
-    brokenCountEl.textContent = (data.broken || []).length;
-
-    resultsBody.innerHTML = '';
-    if (!data.broken || data.broken.length === 0) {
-      resultsBody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-secondary);">Все файлы в порядке</td></tr>';
-    } else {
-      for (const f of data.broken) {
-        const sizeMB = (f.size / 1048576).toFixed(1);
-        const shortErr = f.error.length > 120 ? f.error.substring(0, 120) + '...' : f.error;
-        resultsBody.innerHTML += `
-          <tr>
-            <td>${escHtml(f.camera)}</td>
-            <td>${escHtml(f.date)}</td>
-            <td>${escHtml(f.file)}</td>
-            <td>${sizeMB} МБ</td>
-            <td><small title="${escAttr(f.error)}">${escHtml(shortErr)}</small></td>
-            <td><button class="btn btn-sm btn-primary" onclick="repairVideo('${escAttr(f.path)}', this)">Починить</button></td>
-          </tr>`;
-      }
-    }
+    const pct = data.total > 0 ? Math.round((data.checked / data.total) * 100) : 0;
+    progressText.textContent = `Проверено ${data.checked} из ${data.total} (${data.broken} битых)`;
+    progressBar.value = pct;
+    scanCurrent.textContent = data.current || '';
   } catch (err) {
-    statusText.textContent = 'Ошибка: ' + err.message;
   }
-
-  btn.disabled = false;
-  btn.textContent = 'Сканировать';
 }
 
 async function repairVideo(path, btn) {

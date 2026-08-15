@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -1503,7 +1505,20 @@ type BrokenFile struct {
 	Error  string `json:"error"`
 }
 
-func (a *API) HandleToolsScan(w http.ResponseWriter, r *http.Request) {
+type scanState struct {
+	mu          sync.Mutex
+	running     bool
+	total       int
+	checked     int
+	brokenCount int
+	current     string
+	brokenFiles []BrokenFile
+	err         string
+}
+
+var toolsScan = &scanState{}
+
+func (a *API) HandleToolsScanStart(w http.ResponseWriter, r *http.Request) {
 	if !requireAdminRole(r) {
 		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 		return
@@ -1511,14 +1526,70 @@ func (a *API) HandleToolsScan(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	entries, err := os.ReadDir(a.config.BaseDir)
-	if err != nil {
-		json.NewEncoder(w).Encode(map[string]any{"error": err.Error(), "total": 0, "broken": []BrokenFile{}})
+	toolsScan.mu.Lock()
+	if toolsScan.running {
+		toolsScan.mu.Unlock()
+		json.NewEncoder(w).Encode(map[string]string{"status": "already running"})
+		return
+	}
+	toolsScan.running = true
+	toolsScan.total = 0
+	toolsScan.checked = 0
+	toolsScan.brokenCount = 0
+	toolsScan.current = ""
+	toolsScan.brokenFiles = nil
+	toolsScan.err = ""
+	toolsScan.mu.Unlock()
+
+	go a.runScan()
+
+	json.NewEncoder(w).Encode(map[string]string{"status": "started"})
+}
+
+func (a *API) HandleToolsScanStatus(w http.ResponseWriter, r *http.Request) {
+	if !requireAdminRole(r) {
+		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 		return
 	}
 
-	var broken []BrokenFile
-	total := 0
+	w.Header().Set("Content-Type", "application/json")
+
+	toolsScan.mu.Lock()
+	resp := map[string]any{
+		"running": toolsScan.running,
+		"total":   toolsScan.total,
+		"checked": toolsScan.checked,
+		"broken":  toolsScan.brokenCount,
+		"current": toolsScan.current,
+	}
+	if !toolsScan.running {
+		if toolsScan.err != "" {
+			resp["error"] = toolsScan.err
+		}
+		resp["results"] = toolsScan.brokenFiles
+	}
+	toolsScan.mu.Unlock()
+
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (a *API) runScan() {
+	entries, err := os.ReadDir(a.config.BaseDir)
+	if err != nil {
+		toolsScan.mu.Lock()
+		toolsScan.running = false
+		toolsScan.err = err.Error()
+		toolsScan.mu.Unlock()
+		return
+	}
+
+	var mp4Files []struct {
+		camera string
+		path   string
+		name   string
+		size   int64
+		date   string
+	}
 
 	for _, cameraEntry := range entries {
 		if !cameraEntry.IsDir() {
@@ -1531,37 +1602,70 @@ func (a *API) HandleToolsScan(w http.ResponseWriter, r *http.Request) {
 			if err != nil || info.IsDir() || !strings.HasSuffix(info.Name(), ".mp4") {
 				return nil
 			}
-			total++
-
-			cmd := exec.Command("ffmpeg", "-v", "error", "-i", path, "-f", "null", "-")
-			var stderr bytes.Buffer
-			cmd.Stderr = &stderr
-			cmd.Run()
-
-			if stderr.Len() > 0 {
-				rel, _ := filepath.Rel(a.config.BaseDir, path)
-				parts := strings.SplitN(rel, string(filepath.Separator), 3)
-				date := ""
-				if len(parts) >= 3 {
-					date = filepath.Join(parts[1], parts[2])
-				}
-				broken = append(broken, BrokenFile{
-					Camera: camera,
-					Date:   date,
-					File:   info.Name(),
-					Path:   path,
-					Size:   info.Size(),
-					Error:  strings.TrimSpace(stderr.String()),
-				})
+			rel, _ := filepath.Rel(a.config.BaseDir, path)
+			parts := strings.SplitN(rel, string(filepath.Separator), 3)
+			date := ""
+			if len(parts) >= 3 {
+				date = parts[1] + "/" + parts[2]
+				date = filepath.Dir(date)
 			}
+			mp4Files = append(mp4Files, struct {
+				camera string
+				path   string
+				name   string
+				size   int64
+				date   string
+			}{camera, path, info.Name(), info.Size(), date})
 			return nil
 		})
 	}
 
-	json.NewEncoder(w).Encode(map[string]any{
-		"total":  total,
-		"broken": broken,
-	})
+	toolsScan.mu.Lock()
+	toolsScan.total = len(mp4Files)
+	toolsScan.mu.Unlock()
+
+	activeRec := a.recorder.ActiveRecordings()
+
+	for i, f := range mp4Files {
+		if activeRec[f.path] {
+			toolsScan.mu.Lock()
+			toolsScan.checked = i + 1
+			toolsScan.mu.Unlock()
+			continue
+		}
+		toolsScan.mu.Lock()
+		toolsScan.current = f.camera + "/" + f.date + "/" + f.name
+		toolsScan.mu.Unlock()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		cmd := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", f.path)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		cmd.Run()
+		cancel()
+
+		toolsScan.mu.Lock()
+		toolsScan.checked = i + 1
+		if stderr.Len() > 0 {
+			toolsScan.brokenCount++
+			toolsScan.brokenFiles = append(toolsScan.brokenFiles, BrokenFile{
+				Camera: f.camera,
+				Date:   f.date,
+				File:   f.name,
+				Path:   f.path,
+				Size:   f.size,
+				Error:  strings.TrimSpace(stderr.String()),
+			})
+		}
+		toolsScan.mu.Unlock()
+	}
+
+	toolsScan.mu.Lock()
+	toolsScan.running = false
+	toolsScan.current = ""
+	toolsScan.mu.Unlock()
+
+	log.Printf("tools scan: %d files checked, %d broken", toolsScan.total, toolsScan.brokenCount)
 }
 
 func (a *API) HandleToolsRepair(w http.ResponseWriter, r *http.Request) {
