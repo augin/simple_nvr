@@ -166,18 +166,10 @@ func gracefulStop(cmd *exec.Cmd, grace time.Duration) {
 	timer := time.NewTimer(grace)
 	defer timer.Stop()
 
-	exited := make(chan struct{})
-	go func() {
-		_ = cmd.Wait()
-		close(exited)
-	}()
-
 	select {
-	case <-exited:
 	case <-timer.C:
 		log.Printf("Process %d did not exit within %v, sending SIGKILL", cmd.Process.Pid, grace)
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		<-exited
 	}
 }
 
