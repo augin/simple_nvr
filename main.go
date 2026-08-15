@@ -234,6 +234,16 @@ func startScheduler(recorder *Recorder) {
 		storage := NewStorage(recorder.config)
 		storage.CleanCameraFolders()
 		recorder.StartRecording(607)
-		time.Sleep(10 * time.Minute)
+
+		now := time.Now()
+		nextMinute := ((now.Minute() / 10) + 1) * 10
+		var nextTick time.Time
+		if nextMinute >= 60 {
+			nextTick = time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
+		} else {
+			nextTick = time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), nextMinute, 0, 0, now.Location())
+		}
+		log.Printf("Next recording cycle in %v", nextTick.Sub(now).Round(time.Second))
+		time.Sleep(nextTick.Sub(now))
 	}
 }
