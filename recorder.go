@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -161,15 +162,55 @@ func gracefulStop(cmd *exec.Cmd, grace time.Duration) {
 	if cmd.Process == nil {
 		return
 	}
-	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+	pid := cmd.Process.Pid
+	pgid := -pid
+
+	// Check if process is still alive before sending anything
+	if err := syscall.Kill(pid, 0); err != nil {
+		log.Printf("[stop] PID %d already dead: %v", pid, err)
+		return
+	}
+
+	// Check process state
+	if state, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid)); err == nil {
+		for _, line := range strings.Split(string(state), "\n") {
+			if strings.HasPrefix(line, "State:") {
+				log.Printf("[stop] PID %d state: %s", pid, strings.TrimSpace(line))
+				break
+			}
+		}
+	}
+
+	log.Printf("[stop] Sending SIGTERM to pgid %d (PID %d)", pgid, pid)
+	err := syscall.Kill(pgid, syscall.SIGTERM)
+	log.Printf("[stop] SIGTERM result: %v", err)
 
 	timer := time.NewTimer(grace)
 	defer timer.Stop()
 
+	exited := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(exited)
+	}()
+
 	select {
+	case <-exited:
+		log.Printf("[stop] PID %d exited gracefully after SIGTERM", pid)
 	case <-timer.C:
-		log.Printf("Process %d did not exit within %v, sending SIGKILL", cmd.Process.Pid, grace)
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		// Check state before SIGKILL
+		if state, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid)); err == nil {
+			for _, line := range strings.Split(string(state), "\n") {
+				if strings.HasPrefix(line, "State:") {
+					log.Printf("[stop] PID %d still alive after %v, state: %s", pid, grace, strings.TrimSpace(line))
+					break
+				}
+			}
+		}
+		log.Printf("[stop] Sending SIGKILL to pgid %d", pgid)
+		_ = syscall.Kill(pgid, syscall.SIGKILL)
+		<-exited
+		log.Printf("[stop] PID %d killed by SIGKILL", pid)
 	}
 }
 
