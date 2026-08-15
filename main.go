@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-var version = "2.10.18"
+var version = "2.10.19"
 
 func findStaticDir() string {
 	exe, err := os.Executable()
@@ -234,7 +234,7 @@ func startScheduler(recorder *Recorder) {
 		nextMinute := ((now.Minute() / 10) + 1) * 10
 		var nextTick time.Time
 		if nextMinute >= 60 {
-			nextTick = time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
+			nextTick = time.Date(now.Year(), now.Month(), now.Day(), now.Hour()+1, 0, 0, 0, now.Location())
 		} else {
 			nextTick = time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), nextMinute, 0, 0, now.Location())
 		}
