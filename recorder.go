@@ -92,6 +92,7 @@ func (r *Recorder) recordStream(streamName, year, month, day, currentTime string
 		"-fflags", "+nobuffer+genpts+discardcorrupt",
 		"-flags", "low_delay",
 		"-rtsp_transport", "tcp",
+		"-stimeout", "10000000",
 		"-use_wallclock_as_timestamps", "1",
 		"-i", fmt.Sprintf("%s/%s", r.config.StreamServer, streamName),
 		"-reset_timestamps", "1", "-strftime", "1",
