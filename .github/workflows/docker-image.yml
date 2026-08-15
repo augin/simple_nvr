@@ -52,3 +52,29 @@ jobs:
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+
+    - name: Extract version from tag
+      id: version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+    - name: Configure SSH key
+      if: github.event_name != 'pull_request'
+      env:
+        SSH_KEY: ${{ secrets.HA_ADDONS_SSH_KEY }}
+      run: |
+        mkdir -p ~/.ssh
+        echo "$SSH_KEY" > ~/.ssh/id_ed25519
+        chmod 600 ~/.ssh/id_ed25519
+        ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+    - name: Update HA addons config.yaml version
+      if: github.event_name != 'pull_request'
+      run: |
+        git clone git@github.com:augin/ha_addons.git
+        cd ha_addons/simple_nvr
+        sed -i "s/^version: .*/version: ${{ steps.version.outputs.VERSION }}/" config.yaml
+        git config user.email "ci-bot@augin.ru"
+        git config user.name "CI Bot"
+        git add config.yaml
+        git commit -m "v${{ steps.version.outputs.VERSION }}: update NVR addon version"
+        git push origin main
