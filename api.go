@@ -43,6 +43,18 @@ func NewAPI(config *NVRConfig, configPath string, recorder *Recorder, storage *S
 	}
 }
 
+func (a *API) restartGo2RTC() error {
+	resp, err := http.Post("http://localhost:1984/api/restart", "", nil)
+	if err != nil {
+		return fmt.Errorf("go2rtc restart failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("go2rtc restart returned status %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func (a *API) HandleCameras(w http.ResponseWriter, r *http.Request) {
 	go2cfg, err := loadGo2RTCConfig(a.config.Go2RTCConfigPath)
 	if err != nil {
@@ -1120,9 +1132,8 @@ func (a *API) HandleGo2RTCRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmd := exec.Command("systemctl", "restart", "go2rtc")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		log.Printf("go2rtc restart error: %v %s", err, string(out))
+	if err := a.restartGo2RTC(); err != nil {
+		log.Printf("go2rtc restart error: %v", err)
 		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
 		return
 	}
@@ -1359,7 +1370,9 @@ func (a *API) handleGo2RTCCamerasAdd(w http.ResponseWriter, r *http.Request) {
 		log.Printf("warning: save nvr config: %v", err)
 	}
 
-	exec.Command("systemctl", "restart", "go2rtc").Run()
+	if err := a.restartGo2RTC(); err != nil {
+		log.Printf("go2rtc restart error after adding camera %s: %v", req.Name, err)
+	}
 
 	log.Printf("go2rtc: added camera %s (%s)", req.Name, req.Type)
 	w.Header().Set("Content-Type", "application/json")
@@ -1403,7 +1416,9 @@ func (a *API) handleGo2RTCCamerasDelete(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	exec.Command("systemctl", "restart", "go2rtc").Run()
+	if err := a.restartGo2RTC(); err != nil {
+		log.Printf("go2rtc restart error after deleting camera %s: %v", name, err)
+	}
 
 	log.Printf("go2rtc: deleted camera %s", name)
 	w.Header().Set("Content-Type", "application/json")
