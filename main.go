@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-var version = "2.10.16"
+var version = "2.10.18"
 
 func findStaticDir() string {
 	exe, err := os.Executable()
@@ -226,15 +226,10 @@ func startScheduler(recorder *Recorder) {
 	nextInterval := ((minute / 10) + 1) * 10
 	remaining := (nextInterval - minute) * 60 - second
 
-	log.Printf("First recording now: %ds until :%02d:00 (+7s overlap)", remaining+7, nextInterval%60)
+	log.Printf("First recording now: %ds until :%02d:00 (+7s overlap)", remaining, nextInterval%60)
 	recorder.StartRecording(remaining + 7)
-	time.Sleep(time.Duration(remaining) * time.Second)
 
 	for {
-		storage := NewStorage(recorder.config)
-		storage.CleanCameraFolders()
-		recorder.StartRecording(607)
-
 		now := time.Now()
 		nextMinute := ((now.Minute() / 10) + 1) * 10
 		var nextTick time.Time
@@ -243,7 +238,11 @@ func startScheduler(recorder *Recorder) {
 		} else {
 			nextTick = time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), nextMinute, 0, 0, now.Location())
 		}
-		log.Printf("Next recording cycle in %v", nextTick.Sub(now).Round(time.Second))
+		log.Printf("Next recording cycle at %s (in %v)", nextTick.Format("15:04:05"), nextTick.Sub(now).Round(time.Second))
 		time.Sleep(nextTick.Sub(now))
+
+		storage := NewStorage(recorder.config)
+		storage.CleanCameraFolders()
+		recorder.StartRecording(607)
 	}
 }
