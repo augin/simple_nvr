@@ -57,20 +57,10 @@ jobs:
       id: version
       run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
-    - name: Configure SSH key
-      if: github.event_name != 'pull_request'
-      env:
-        SSH_KEY: ${{ secrets.HA_ADDONS_SSH_KEY }}
-      run: |
-        mkdir -p ~/.ssh
-        echo "$SSH_KEY" > ~/.ssh/id_ed25519
-        chmod 600 ~/.ssh/id_ed25519
-        ssh-keyscan github.com >> ~/.ssh/known_hosts
-
     - name: Update HA addons config.yaml version
       if: github.event_name != 'pull_request'
       run: |
-        git clone git@github.com:augin/ha_addons.git
+        git clone https://x-access-token:${{ secrets.HA_ADDONS_PAT }}@github.com/augin/ha_addons.git
         cd ha_addons/simple_nvr
         sed -i "s/^version: .*/version: ${{ steps.version.outputs.VERSION }}/" config.yaml
         git config user.email "ci-bot@augin.ru"
