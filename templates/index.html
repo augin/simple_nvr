@@ -38,6 +38,7 @@
       <button class="nav-tab" data-tab="alarm" onclick="switchTab('alarm')">Тревога</button>
       <button class="nav-tab" data-tab="logs" onclick="switchTab('logs')">Логи</button>
       <button class="nav-tab" data-tab="settings" onclick="switchTab('settings')">Настройки</button>
+      <button class="nav-tab" data-tab="tools" onclick="switchTab('tools')">Инструменты</button>
     </div>
     <div class="nav-right">
       <span class="nav-user" id="nav-user"></span>
@@ -421,6 +422,38 @@
                 </tr>
               </thead>
               <tbody id="cameras-list"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-tools" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <h3>Проверка видеофайлов</h3>
+          <div class="form-actions">
+            <button class="btn btn-primary" id="btn-scan" onclick="scanVideos()">Сканировать</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div id="scan-status" style="display:none;">
+            <p id="scan-status-text"></p>
+          </div>
+          <div id="scan-results" style="display:none;">
+            <p><span id="scan-total"></span> файлов проверено, <span id="scan-broken-count"></span> битых</p>
+            <table class="cameras-table">
+              <thead>
+                <tr>
+                  <th>Камера</th>
+                  <th>Дата</th>
+                  <th>Файл</th>
+                  <th>Размер</th>
+                  <th>Ошибка</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="scan-results-body"></tbody>
             </table>
           </div>
         </div>

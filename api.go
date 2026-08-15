@@ -1493,3 +1493,133 @@ func (a *API) HandleGo2RTCReorder(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "reordered"})
 }
+
+type BrokenFile struct {
+	Camera string `json:"camera"`
+	Date   string `json:"date"`
+	File   string `json:"file"`
+	Path   string `json:"path"`
+	Size   int64  `json:"size"`
+	Error  string `json:"error"`
+}
+
+func (a *API) HandleToolsScan(w http.ResponseWriter, r *http.Request) {
+	if !requireAdminRole(r) {
+		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	entries, err := os.ReadDir(a.config.BaseDir)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]any{"error": err.Error(), "total": 0, "broken": []BrokenFile{}})
+		return
+	}
+
+	var broken []BrokenFile
+	total := 0
+
+	for _, cameraEntry := range entries {
+		if !cameraEntry.IsDir() {
+			continue
+		}
+		camera := cameraEntry.Name()
+		cameraDir := filepath.Join(a.config.BaseDir, camera)
+
+		filepath.Walk(cameraDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() || !strings.HasSuffix(info.Name(), ".mp4") {
+				return nil
+			}
+			total++
+
+			cmd := exec.Command("ffmpeg", "-v", "error", "-i", path, "-f", "null", "-")
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			cmd.Run()
+
+			if stderr.Len() > 0 {
+				rel, _ := filepath.Rel(a.config.BaseDir, path)
+				parts := strings.SplitN(rel, string(filepath.Separator), 3)
+				date := ""
+				if len(parts) >= 3 {
+					date = filepath.Join(parts[1], parts[2])
+				}
+				broken = append(broken, BrokenFile{
+					Camera: camera,
+					Date:   date,
+					File:   info.Name(),
+					Path:   path,
+					Size:   info.Size(),
+					Error:  strings.TrimSpace(stderr.String()),
+				})
+			}
+			return nil
+		})
+	}
+
+	json.NewEncoder(w).Encode(map[string]any{
+		"total":  total,
+		"broken": broken,
+	})
+}
+
+func (a *API) HandleToolsRepair(w http.ResponseWriter, r *http.Request) {
+	if !requireAdminRole(r) {
+		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+		return
+	}
+
+	if req.Path == "" || !strings.HasPrefix(req.Path, a.config.BaseDir) {
+		http.Error(w, `{"error":"invalid path"}`, http.StatusBadRequest)
+		return
+	}
+
+	if _, err := os.Stat(req.Path); os.IsNotExist(err) {
+		http.Error(w, `{"error":"file not found"}`, http.StatusNotFound)
+		return
+	}
+
+	fixedPath := req.Path + ".fixed"
+
+	cmd := exec.Command("ffmpeg", "-v", "warning", "-y", "-i", req.Path, "-c", "copy", "-movflags", "+faststart", fixedPath)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+
+	if err != nil || stderr.Len() > 0 {
+		os.Remove(fixedPath)
+		cmd = exec.Command("ffmpeg", "-v", "warning", "-y", "-i", req.Path, "-c:v", "libx264", "-crf", "23", "-preset", "ultrafast", "-c:a", "aac", "-movflags", "+faststart", fixedPath)
+		var stderr2 bytes.Buffer
+		cmd.Stderr = &stderr2
+		err = cmd.Run()
+
+		if err != nil {
+			os.Remove(fixedPath)
+			log.Printf("repair failed %s: %v %s", req.Path, err, stderr2.String())
+			json.NewEncoder(w).Encode(map[string]any{"status": "error", "message": stderr2.String()})
+			return
+		}
+	}
+
+	if fi, err := os.Stat(fixedPath); err == nil && fi.Size() > 0 {
+		os.Rename(req.Path, req.Path+".bak")
+		os.Rename(fixedPath, req.Path)
+		log.Printf("repaired %s (copy backup: %s.bak)", req.Path, req.Path)
+		json.NewEncoder(w).Encode(map[string]any{"status": "ok", "size": fi.Size()})
+		return
+	}
+
+	os.Remove(fixedPath)
+	json.NewEncoder(w).Encode(map[string]any{"status": "error", "message": "fixed file is empty"})
+}
