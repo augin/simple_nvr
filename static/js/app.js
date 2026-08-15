@@ -1638,6 +1638,7 @@ async function addCamera(e) {
 
     closeAddCameraModal();
     loadCameras();
+    fetchCameras();
   } catch (err) {
     console.error('addCamera error:', err);
   }
@@ -1678,6 +1679,7 @@ async function deleteCamera(name) {
     }
 
     loadCameras();
+    fetchCameras();
   } catch (err) {
     console.error('deleteCamera error:', err);
   }
