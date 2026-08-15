@@ -43,8 +43,17 @@ func NewAPI(config *NVRConfig, configPath string, recorder *Recorder, storage *S
 	}
 }
 
+func (a *API) go2rtcAPIBase() string {
+	if a.config.StreamServer != "" {
+		if u, err := url.Parse(a.config.StreamServer); err == nil && u.Hostname() != "" {
+			return "http://" + u.Hostname() + ":1984"
+		}
+	}
+	return "http://localhost:1984"
+}
+
 func (a *API) restartGo2RTC() error {
-	resp, err := http.Post("http://localhost:1984/api/restart", "", nil)
+	resp, err := http.Post(a.go2rtcAPIBase()+"/api/restart", "", nil)
 	if err != nil {
 		return fmt.Errorf("go2rtc restart failed: %w", err)
 	}
@@ -972,7 +981,7 @@ func (a *API) HandleGo2RTCStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if binaryExists {
-		resp, err := http.Get("http://localhost:1984/api")
+		resp, err := http.Get(a.go2rtcAPIBase() + "/api")
 		if err == nil {
 			defer resp.Body.Close()
 			var go2rtcInfo map[string]any
