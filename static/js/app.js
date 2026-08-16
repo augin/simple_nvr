@@ -1904,6 +1904,11 @@ function escAttr(s) {
 
 let scanPollTimer = null;
 let scanKnownBroken = new Set();
+let scanLastResultCount = 0;
+let scanLastResultTime = Date.now();
+const SCAN_POLL_FAST = 500;
+const SCAN_POLL_MED = 1500;
+const SCAN_POLL_SLOW = 3000;
 
 async function scanVideos() {
   const btn = document.getElementById('btn-scan');
@@ -1916,8 +1921,10 @@ async function scanVideos() {
   const totalEl = document.getElementById('scan-total');
   const brokenCountEl = document.getElementById('scan-broken-count');
 
-  if (scanPollTimer) { clearInterval(scanPollTimer); scanPollTimer = null; }
+  if (scanPollTimer) { clearTimeout(scanPollTimer); scanPollTimer = null; }
   scanKnownBroken = new Set();
+  scanLastResultCount = 0;
+  scanLastResultTime = Date.now();
 
   btn.disabled = true;
   btn.textContent = 'Проверка...';
@@ -1946,7 +1953,7 @@ async function scanVideos() {
     return;
   }
 
-  scanPollTimer = setInterval(pollScan, 500);
+  pollScan();
 }
 
 async function pollScan() {
@@ -1964,10 +1971,11 @@ async function pollScan() {
     const resp = await fetch(apiUrl('api/tools/scan/status'));
     const data = await resp.json();
 
-    if (data.results && data.results.length > 0) {
+    if (data.results && data.results.length > scanLastResultCount) {
       resultsEl.style.display = '';
       let brokenCount = 0;
-      for (const f of data.results) {
+      for (let i = scanLastResultCount; i < data.results.length; i++) {
+        const f = data.results[i];
         if (scanKnownBroken.has(f.path)) continue;
         scanKnownBroken.add(f.path);
         const sizeMB = (f.size / 1048576).toFixed(1);
@@ -1983,20 +1991,21 @@ async function pollScan() {
         resultsBody.appendChild(row);
         brokenCount++;
       }
+      scanLastResultCount = data.results.length;
+      scanLastResultTime = Date.now();
       brokenCountEl.textContent = scanKnownBroken.size;
       const recoverAllBtn = document.getElementById('btn-recover-all');
-      if (brokenCount > 0) {
+      if (scanKnownBroken.size > 0) {
         recoverAllBtn.style.display = '';
-        recoverAllBtn.dataset.count = brokenCount;
-        recoverAllBtn.textContent = `Починить все (${brokenCount})`;
+        recoverAllBtn.dataset.count = scanKnownBroken.size;
+        recoverAllBtn.textContent = `Починить все (${scanKnownBroken.size})`;
       } else {
         recoverAllBtn.style.display = 'none';
       }
     }
 
     if (!data.running) {
-      clearInterval(scanPollTimer);
-      scanPollTimer = null;
+      if (scanPollTimer) { clearTimeout(scanPollTimer); scanPollTimer = null; }
 
       progressEl.style.display = 'none';
 
@@ -2021,7 +2030,12 @@ async function pollScan() {
     progressBar.value = pct;
     totalEl.textContent = data.total;
     scanCurrent.textContent = data.current || '';
+
+    const idle = Date.now() - scanLastResultTime;
+    const nextInterval = idle >= 30000 ? SCAN_POLL_SLOW : idle >= 10000 ? SCAN_POLL_MED : SCAN_POLL_FAST;
+    scanPollTimer = setTimeout(pollScan, nextInterval);
   } catch (err) {
+    scanPollTimer = setTimeout(pollScan, SCAN_POLL_FAST);
   }
 }
 

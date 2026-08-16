@@ -1628,40 +1628,91 @@ func (a *API) runScan() {
 
 	activeRec := a.recorder.ActiveRecordings()
 
-	for i, f := range mp4Files {
-		if activeRec[f.path] {
-			toolsScan.mu.Lock()
-			toolsScan.checked = i + 1
-			toolsScan.mu.Unlock()
-			continue
-		}
-		toolsScan.mu.Lock()
-		toolsScan.current = f.camera + "/" + f.date + "/" + f.name
-		toolsScan.mu.Unlock()
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		cmd := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", f.path)
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		cmd.Run()
-		cancel()
-
-		toolsScan.mu.Lock()
-		toolsScan.checked = i + 1
-		if stderr.Len() > 0 && !toolsScan.seen[f.path] {
-			toolsScan.seen[f.path] = true
-			toolsScan.brokenCount++
-			toolsScan.brokenFiles = append(toolsScan.brokenFiles, BrokenFile{
-				Camera: f.camera,
-				Date:   f.date,
-				File:   f.name,
-				Path:   f.path,
-				Size:   f.size,
-				Error:  strings.TrimSpace(stderr.String()),
-			})
-		}
-		toolsScan.mu.Unlock()
+	type scanResult struct {
+		camera string
+		path   string
+		name   string
+		size   int64
+		date   string
+		broken bool
+		err    string
 	}
+
+	fileCh := make(chan struct {
+		camera string
+		path   string
+		name   string
+		size   int64
+		date   string
+	}, len(mp4Files))
+	resultCh := make(chan scanResult, len(mp4Files))
+
+	numWorkers := runtime.NumCPU()
+	if numWorkers < 2 {
+		numWorkers = 2
+	}
+	if numWorkers > 8 {
+		numWorkers = 8
+	}
+
+	var wg sync.WaitGroup
+	for w := 0; w < numWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for f := range fileCh {
+				if activeRec[f.path] {
+					resultCh <- scanResult{camera: f.camera, path: f.path, name: f.name, size: f.size, date: f.date, broken: false}
+					continue
+				}
+
+				toolsScan.mu.Lock()
+				toolsScan.current = f.camera + "/" + f.date + "/" + f.name
+				toolsScan.mu.Unlock()
+
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				cmd := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", f.path)
+				var stderr bytes.Buffer
+				cmd.Stderr = &stderr
+				cmd.Run()
+				cancel()
+
+				resultCh <- scanResult{camera: f.camera, path: f.path, name: f.name, size: f.size, date: f.date, broken: stderr.Len() > 0, err: strings.TrimSpace(stderr.String())}
+			}
+		}()
+	}
+
+	for _, f := range mp4Files {
+		fileCh <- f
+	}
+	close(fileCh)
+
+	var collectWg sync.WaitGroup
+	collectWg.Add(1)
+	go func() {
+		defer collectWg.Done()
+		for res := range resultCh {
+			toolsScan.mu.Lock()
+			toolsScan.checked++
+			if res.broken && !toolsScan.seen[res.path] {
+				toolsScan.seen[res.path] = true
+				toolsScan.brokenCount++
+				toolsScan.brokenFiles = append(toolsScan.brokenFiles, BrokenFile{
+					Camera: res.camera,
+					Date:   res.date,
+					File:   res.name,
+					Path:   res.path,
+					Size:   res.size,
+					Error:  res.err,
+				})
+			}
+			toolsScan.mu.Unlock()
+		}
+	}()
+
+	wg.Wait()
+	close(resultCh)
+	collectWg.Wait()
 
 	toolsScan.mu.Lock()
 	toolsScan.running = false
@@ -1711,7 +1762,7 @@ func (a *API) HandleToolsRepair(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]any{"status": "error", "message": fmt.Sprintf("Восстановление невозможно: %v", err)})
 			return
 		}
-		// Verify recovered file
+		// Verify recovered file is actually playable
 		ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Second)
 		verifyCmd := exec.CommandContext(ctx2, "ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", req.Path)
 		var verifyStderr bytes.Buffer
@@ -1732,12 +1783,24 @@ func (a *API) HandleToolsRepair(w http.ResponseWriter, r *http.Request) {
 
 	fixedPath := req.Path + ".fixed"
 
-	cmd := exec.Command("ffmpeg", "-v", "warning", "-y", "-i", req.Path, "-c", "copy", "-movflags", "+faststart", "-f", "mp4", fixedPath)
+	cmd := exec.Command("ffmpeg", "-v", "warning", "-y", "-fflags", "+genpts", "-i", req.Path, "-c", "copy", "-movflags", "+faststart", "-f", "mp4", fixedPath)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 
-	if err != nil || stderr.Len() > 0 {
+	needsReencode := err != nil || stderr.Len() > 0
+	if !needsReencode {
+		ctx3, cancel3 := context.WithTimeout(context.Background(), 10*time.Second)
+		checkFixed := exec.CommandContext(ctx3, "ffprobe", "-v", "error", "-of", "default=noprint_wrappers=1", fixedPath)
+		var fixedStderr bytes.Buffer
+		checkFixed.Stderr = &fixedStderr
+		checkFixed.Run()
+		cancel3()
+		needsReencode = strings.Contains(fixedStderr.String(), "non monotonically increasing dts") ||
+			strings.Contains(fixedStderr.String(), "Invalid data found when processing input")
+	}
+
+	if needsReencode {
 		os.Remove(fixedPath)
 		cmd = exec.Command("ffmpeg", "-v", "warning", "-y", "-i", req.Path, "-c:v", "libx264", "-crf", "23", "-preset", "ultrafast", "-c:a", "aac", "-movflags", "+faststart", "-f", "mp4", fixedPath)
 		var stderr2 bytes.Buffer
