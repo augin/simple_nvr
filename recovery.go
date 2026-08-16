@@ -24,6 +24,10 @@ const (
 	nalTypeIDR2   = 20
 	nalTypeSEI    = 39
 	nalTypeSEI2   = 40
+	nalTypeSEI3   = 41
+	nalTypeSEI4   = 42
+	nalTypeSEI5   = 43
+	nalTypeSEI6   = 44
 	nalTypeTrailN = 0
 	nalTypeTrailR = 1
 
@@ -35,6 +39,7 @@ const (
 var validNALTypesHEVC = map[byte]bool{
 	nalTypeVPS: true, nalTypeSPS: true, nalTypePPS: true,
 	nalTypeIDR: true, nalTypeIDR2: true, nalTypeSEI: true, nalTypeSEI2: true,
+	nalTypeSEI3: true, nalTypeSEI4: true, nalTypeSEI5: true, nalTypeSEI6: true,
 	nalTypeTrailN: true, nalTypeTrailR: true,
 }
 
@@ -510,6 +515,19 @@ func RecoverWithFFmpeg(badPath, camera, go2rtcURL string) error {
 	for pos < len(mdat)-4 {
 		length := int(binary.BigEndian.Uint32(mdat[pos : pos+4]))
 		if length > 2 && length < 1000000 && pos+4+length <= len(mdat) {
+			b := mdat[pos+4]
+			forbidden := (b >> 7) & 1
+			if isH264 {
+				nalType := b & 0x1f
+				if forbidden != 0 || !validNALTypesH264[nalType] {
+					break
+				}
+			} else {
+				nalType := (b >> 1) & 0x3f
+				if forbidden != 0 || !validNALTypesHEVC[nalType] {
+					break
+				}
+			}
 			annexB = append(annexB, 0x00, 0x00, 0x00, 0x01)
 			annexB = append(annexB, mdat[pos+4:pos+4+length]...)
 			pos += 4 + length
@@ -535,7 +553,9 @@ func RecoverWithFFmpeg(badPath, camera, go2rtcURL string) error {
 
 	fixedPath := badPath + ".fixed"
 
-	args := []string{"-v", "warning", "-y", "-f", format, "-i", streamPath,
+	args := []string{"-v", "warning", "-y", "-fflags", "+genpts+discardcorrupt",
+		"-err_detect", "ignore_err",
+		"-f", format, "-i", streamPath,
 		"-c", "copy", "-movflags", "+faststart", "-f", "mp4", fixedPath}
 
 	if codecInfo != nil && codecInfo.Width > 0 && codecInfo.Height > 0 {
