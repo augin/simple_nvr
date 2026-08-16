@@ -1903,6 +1903,7 @@ function escAttr(s) {
 }
 
 let scanPollTimer = null;
+let scanKnownBroken = new Set();
 
 async function scanVideos() {
   const btn = document.getElementById('btn-scan');
@@ -1916,14 +1917,18 @@ async function scanVideos() {
   const brokenCountEl = document.getElementById('scan-broken-count');
 
   if (scanPollTimer) { clearInterval(scanPollTimer); scanPollTimer = null; }
+  scanKnownBroken = new Set();
 
   btn.disabled = true;
   btn.textContent = 'Проверка...';
   progressEl.style.display = '';
-  resultsEl.style.display = 'none';
+  resultsEl.style.display = '';
+  resultsBody.innerHTML = '';
   progressText.textContent = 'Запуск сканирования...';
   progressBar.value = 0;
   scanCurrent.textContent = '';
+  totalEl.textContent = '?';
+  brokenCountEl.textContent = '0';
 
   try {
     const resp = await fetch(apiUrl('api/tools/scan'), { method: 'POST' });
@@ -1941,7 +1946,7 @@ async function scanVideos() {
     return;
   }
 
-  scanPollTimer = setInterval(pollScan, 1000);
+  scanPollTimer = setInterval(pollScan, 500);
 }
 
 async function pollScan() {
@@ -1959,12 +1964,41 @@ async function pollScan() {
     const resp = await fetch(apiUrl('api/tools/scan/status'));
     const data = await resp.json();
 
+    if (data.results && data.results.length > 0) {
+      resultsEl.style.display = '';
+      let brokenCount = 0;
+      for (const f of data.results) {
+        if (scanKnownBroken.has(f.path)) continue;
+        scanKnownBroken.add(f.path);
+        const sizeMB = (f.size / 1048576).toFixed(1);
+        const shortErr = f.error.length > 120 ? f.error.substring(0, 120) + '...' : f.error;
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td>${escHtml(f.camera)}</td>
+          <td>${escHtml(f.date)}</td>
+          <td>${escHtml(f.file)}</td>
+          <td>${sizeMB} МБ</td>
+          <td><small title="${escAttr(f.error)}">${escHtml(shortErr)}</small></td>
+          <td><button class="btn btn-sm btn-primary" onclick="repairVideo('${escAttr(f.path)}', this)">Починить</button></td>`;
+        resultsBody.appendChild(row);
+        brokenCount++;
+      }
+      brokenCountEl.textContent = scanKnownBroken.size;
+      const recoverAllBtn = document.getElementById('btn-recover-all');
+      if (brokenCount > 0) {
+        recoverAllBtn.style.display = '';
+        recoverAllBtn.dataset.count = brokenCount;
+        recoverAllBtn.textContent = `Починить все (${brokenCount})`;
+      } else {
+        recoverAllBtn.style.display = 'none';
+      }
+    }
+
     if (!data.running) {
       clearInterval(scanPollTimer);
       scanPollTimer = null;
 
       progressEl.style.display = 'none';
-      resultsEl.style.display = '';
 
       if (data.error) {
         totalEl.textContent = '0';
@@ -1972,24 +2006,8 @@ async function pollScan() {
         resultsBody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-secondary);">Ошибка: ${escHtml(data.error)}</td></tr>`;
       } else {
         totalEl.textContent = data.total;
-        brokenCountEl.textContent = data.broken;
-        resultsBody.innerHTML = '';
-        if (!data.results || data.results.length === 0) {
+        if (scanKnownBroken.size === 0) {
           resultsBody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-secondary);">Все файлы в порядке</td></tr>';
-        } else {
-          for (const f of data.results) {
-            const sizeMB = (f.size / 1048576).toFixed(1);
-            const shortErr = f.error.length > 120 ? f.error.substring(0, 120) + '...' : f.error;
-            resultsBody.innerHTML += `
-              <tr>
-                <td>${escHtml(f.camera)}</td>
-                <td>${escHtml(f.date)}</td>
-                <td>${escHtml(f.file)}</td>
-                <td>${sizeMB} МБ</td>
-                <td><small title="${escAttr(f.error)}">${escHtml(shortErr)}</small></td>
-                <td><button class="btn btn-sm btn-primary" onclick="repairVideo('${escAttr(f.path)}', this)">Починить</button></td>
-              </tr>`;
-          }
         }
       }
 
@@ -1999,8 +2017,9 @@ async function pollScan() {
     }
 
     const pct = data.total > 0 ? Math.round((data.checked / data.total) * 100) : 0;
-    progressText.textContent = `Проверено ${data.checked} из ${data.total} (${data.broken} битых)`;
+    progressText.textContent = `Проверено ${data.checked} из ${data.total} (${scanKnownBroken.size} битых)`;
     progressBar.value = pct;
+    totalEl.textContent = data.total;
     scanCurrent.textContent = data.current || '';
   } catch (err) {
   }
@@ -2021,6 +2040,7 @@ async function repairVideo(path, btn) {
     if (data.status === 'ok') {
       btn.textContent = 'Готово';
       btn.className = 'btn btn-sm';
+      btn.style.background = '#2e7d32';
       const row = btn.closest('tr');
       if (row) row.style.opacity = '0.5';
     } else {
@@ -2032,4 +2052,63 @@ async function repairVideo(path, btn) {
     btn.textContent = 'Ошибка';
     setTimeout(() => { btn.disabled = false; btn.textContent = 'Починить'; }, 3000);
   }
+}
+
+async function recoverAllVideos() {
+  const btn = document.getElementById('btn-recover-all');
+  btn.disabled = true;
+  const totalCount = parseInt(btn.dataset.count || '0');
+  btn.textContent = `Починка... 0/${totalCount}`;
+
+  const rows = document.querySelectorAll('#scan-results-body tr');
+  const recoverable = [];
+  for (const row of rows) {
+    const b = row.querySelector('button');
+    if (b && !b.disabled && b.textContent === 'Починить') {
+      recoverable.push({ row, btn: b });
+    }
+  }
+
+  let done = 0;
+  let ok = 0;
+  let fail = 0;
+
+  for (const item of recoverable) {
+    done++;
+    item.btn.disabled = true;
+    item.btn.textContent = `${done}/${totalCount}`;
+    item.row.style.opacity = '1';
+
+    try {
+      const path = item.btn.getAttribute('onclick').match(/'([^']+)'/)[1];
+      const resp = await fetch(apiUrl('api/tools/repair'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      });
+      const data = await resp.json();
+      if (data.status === 'ok') {
+        ok++;
+        item.btn.textContent = 'Готово';
+        item.btn.className = 'btn btn-sm';
+        item.btn.style.background = '#2e7d32';
+        item.row.style.opacity = '0.5';
+      } else {
+        fail++;
+        item.btn.textContent = 'Ошибка';
+        item.btn.title = data.message || 'repair failed';
+        item.row.style.opacity = '0.7';
+      }
+    } catch (err) {
+      fail++;
+      item.btn.textContent = 'Ошибка';
+      item.row.style.opacity = '0.7';
+    }
+
+    btn.textContent = `Починка... ${done}/${totalCount}`;
+  }
+
+  btn.textContent = `Готово: ${ok} починено, ${fail} ошибок`;
+  btn.style.background = fail > 0 ? '#e65100' : '#2e7d32';
+  setTimeout(() => { btn.disabled = false; btn.style.background = ''; }, 5000);
 }

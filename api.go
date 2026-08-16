@@ -1513,6 +1513,7 @@ type scanState struct {
 	brokenCount int
 	current     string
 	brokenFiles []BrokenFile
+	seen        map[string]bool
 	err         string
 }
 
@@ -1538,6 +1539,7 @@ func (a *API) HandleToolsScanStart(w http.ResponseWriter, r *http.Request) {
 	toolsScan.brokenCount = 0
 	toolsScan.current = ""
 	toolsScan.brokenFiles = nil
+	toolsScan.seen = make(map[string]bool)
 	toolsScan.err = ""
 	toolsScan.mu.Unlock()
 
@@ -1561,12 +1563,12 @@ func (a *API) HandleToolsScanStatus(w http.ResponseWriter, r *http.Request) {
 		"checked": toolsScan.checked,
 		"broken":  toolsScan.brokenCount,
 		"current": toolsScan.current,
+		"results": toolsScan.brokenFiles,
 	}
 	if !toolsScan.running {
 		if toolsScan.err != "" {
 			resp["error"] = toolsScan.err
 		}
-		resp["results"] = toolsScan.brokenFiles
 	}
 	toolsScan.mu.Unlock()
 
@@ -1646,7 +1648,8 @@ func (a *API) runScan() {
 
 		toolsScan.mu.Lock()
 		toolsScan.checked = i + 1
-		if stderr.Len() > 0 {
+		if stderr.Len() > 0 && !toolsScan.seen[f.path] {
+			toolsScan.seen[f.path] = true
 			toolsScan.brokenCount++
 			toolsScan.brokenFiles = append(toolsScan.brokenFiles, BrokenFile{
 				Camera: f.camera,
@@ -1694,16 +1697,49 @@ func (a *API) HandleToolsRepair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	checkCmd := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", req.Path)
+	var checkStderr bytes.Buffer
+	checkCmd.Stderr = &checkStderr
+	checkErr := checkCmd.Run()
+	cancel()
+
+	if checkErr != nil || strings.Contains(checkStderr.String(), "moov atom not found") {
+		log.Printf("repair: attempting moov recovery for %s", req.Path)
+		if err := RecoverMoov(req.Path); err != nil {
+			log.Printf("moov recovery failed %s: %v", req.Path, err)
+			json.NewEncoder(w).Encode(map[string]any{"status": "error", "message": fmt.Sprintf("Восстановление невозможно: %v", err)})
+			return
+		}
+		// Verify recovered file
+		ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Second)
+		verifyCmd := exec.CommandContext(ctx2, "ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", req.Path)
+		var verifyStderr bytes.Buffer
+		verifyCmd.Stderr = &verifyStderr
+		verifyErr := verifyCmd.Run()
+		cancel2()
+		stderrStr := verifyStderr.String()
+		if verifyErr != nil && strings.Contains(stderrStr, "moov atom not found") {
+			log.Printf("moov recovery verification failed %s: %v %s", req.Path, verifyErr, stderrStr)
+			os.Rename(req.Path+".bak", req.Path)
+			json.NewEncoder(w).Encode(map[string]any{"status": "error", "message": stderrStr})
+			return
+		}
+		log.Printf("moov recovery succeeded %s", req.Path)
+		json.NewEncoder(w).Encode(map[string]any{"status": "ok", "method": "moov_recover"})
+		return
+	}
+
 	fixedPath := req.Path + ".fixed"
 
-	cmd := exec.Command("ffmpeg", "-v", "warning", "-y", "-i", req.Path, "-c", "copy", "-movflags", "+faststart", fixedPath)
+	cmd := exec.Command("ffmpeg", "-v", "warning", "-y", "-i", req.Path, "-c", "copy", "-movflags", "+faststart", "-f", "mp4", fixedPath)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 
 	if err != nil || stderr.Len() > 0 {
 		os.Remove(fixedPath)
-		cmd = exec.Command("ffmpeg", "-v", "warning", "-y", "-i", req.Path, "-c:v", "libx264", "-crf", "23", "-preset", "ultrafast", "-c:a", "aac", "-movflags", "+faststart", fixedPath)
+		cmd = exec.Command("ffmpeg", "-v", "warning", "-y", "-i", req.Path, "-c:v", "libx264", "-crf", "23", "-preset", "ultrafast", "-c:a", "aac", "-movflags", "+faststart", "-f", "mp4", fixedPath)
 		var stderr2 bytes.Buffer
 		cmd.Stderr = &stderr2
 		err = cmd.Run()
