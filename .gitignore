@@ -1,4 +1,5 @@
 nvr
+simple_nvr
 *.exe
 *.test
 *.prof

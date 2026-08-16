@@ -107,42 +107,18 @@ func FetchGo2RTCStreamInfo(go2rtcURL, camera string) (*Go2RTCStreamInfo, error) 
 	consumers, ok := camData["consumers"].([]interface{})
 	if ok && len(consumers) > 0 {
 		cons := consumers[0].(map[string]interface{})
-		sdp, ok := cons["sdp"].(string)
-		if ok {
-			lines := strings.Split(sdp, "\r\n")
-			for _, line := range lines {
-				if strings.HasPrefix(line, "a=sprop-parameter-sets=") {
-					parts := strings.Split(strings.TrimPrefix(line, "a=sprop-parameter-sets="), ",")
-					if len(parts) >= 2 {
-						sps, _ := base64.StdEncoding.DecodeString(parts[0])
-						pps, _ := base64.StdEncoding.DecodeString(parts[1])
-						info.SPS = sps
-						info.PPS = pps
-					}
-				} else if strings.HasPrefix(line, "a=sprop-vps=") {
-					vps, _ := base64.StdEncoding.DecodeString(strings.TrimPrefix(line, "a=sprop-vps="))
-					info.VPS = vps
-				} else if strings.HasPrefix(line, "a=sprop-sps=") {
-					sps, _ := base64.StdEncoding.DecodeString(strings.TrimPrefix(line, "a=sprop-sps="))
-					info.SPS = sps
-				} else if strings.HasPrefix(line, "a=sprop-pps=") {
-					pps, _ := base64.StdEncoding.DecodeString(strings.TrimPrefix(line, "a=sprop-pps="))
-					info.PPS = pps
-				} else if strings.HasPrefix(line, "a=fmtp:") {
-					if idx := strings.Index(line, "sprop-parameter-sets="); idx != -1 {
-						rest := line[idx+len("sprop-parameter-sets="):]
-						if idx2 := strings.Index(rest, ";"); idx2 != -1 {
-							rest = rest[:idx2]
-						}
-						parts := strings.Split(rest, ",")
-						if len(parts) >= 2 {
-							sps, _ := base64.StdEncoding.DecodeString(parts[0])
-							pps, _ := base64.StdEncoding.DecodeString(parts[1])
-							info.SPS = sps
-							info.PPS = pps
-						}
-					}
-				}
+		sdp, _ := cons["sdp"].(string)
+		if sdp != "" {
+			parseSDP(sdp, info)
+		}
+	}
+
+	if info.SPS == nil && info.PPS == nil && info.VPS == nil {
+		if producers, ok := camData["producers"].([]interface{}); ok && len(producers) > 0 {
+			prod := producers[0].(map[string]interface{})
+			sdp, _ := prod["sdp"].(string)
+			if sdp != "" {
+				parseSDP(sdp, info)
 			}
 		}
 	}
@@ -152,6 +128,68 @@ func FetchGo2RTCStreamInfo(go2rtcURL, camera string) (*Go2RTCStreamInfo, error) 
 	}
 
 	return info, nil
+}
+
+func parseSDP(sdp string, info *Go2RTCStreamInfo) {
+	lines := strings.Split(sdp, "\r\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "a=sprop-parameter-sets=") {
+			parts := strings.Split(strings.TrimPrefix(line, "a=sprop-parameter-sets="), ",")
+			if len(parts) >= 2 {
+				sps, _ := base64.StdEncoding.DecodeString(parts[0])
+				pps, _ := base64.StdEncoding.DecodeString(parts[1])
+				info.SPS = sps
+				info.PPS = pps
+			}
+		} else if strings.HasPrefix(line, "a=sprop-vps=") {
+			vps, _ := base64.StdEncoding.DecodeString(strings.TrimPrefix(line, "a=sprop-vps="))
+			info.VPS = vps
+		} else if strings.HasPrefix(line, "a=sprop-sps=") {
+			sps, _ := base64.StdEncoding.DecodeString(strings.TrimPrefix(line, "a=sprop-sps="))
+			info.SPS = sps
+		} else if strings.HasPrefix(line, "a=sprop-pps=") {
+			pps, _ := base64.StdEncoding.DecodeString(strings.TrimPrefix(line, "a=sprop-pps="))
+			info.PPS = pps
+		} else if strings.HasPrefix(line, "a=fmtp:") {
+			if idx := strings.Index(line, "sprop-parameter-sets="); idx != -1 {
+				rest := line[idx+len("sprop-parameter-sets="):]
+				if idx2 := strings.Index(rest, ";"); idx2 != -1 {
+					rest = rest[:idx2]
+				}
+				parts := strings.Split(rest, ",")
+				if len(parts) >= 2 {
+					sps, _ := base64.StdEncoding.DecodeString(parts[0])
+					pps, _ := base64.StdEncoding.DecodeString(parts[1])
+					info.SPS = sps
+					info.PPS = pps
+				}
+			}
+			if idx := strings.Index(line, "sprop-vps="); idx != -1 {
+				rest := line[idx+len("sprop-vps="):]
+				if idx2 := strings.Index(rest, ";"); idx2 != -1 {
+					rest = rest[:idx2]
+				}
+				vps, _ := base64.StdEncoding.DecodeString(rest)
+				info.VPS = vps
+			}
+			if idx := strings.Index(line, "sprop-sps="); idx != -1 {
+				rest := line[idx+len("sprop-sps="):]
+				if idx2 := strings.Index(rest, ";"); idx2 != -1 {
+					rest = rest[:idx2]
+				}
+				sps, _ := base64.StdEncoding.DecodeString(rest)
+				info.SPS = sps
+			}
+			if idx := strings.Index(line, "sprop-pps="); idx != -1 {
+				rest := line[idx+len("sprop-pps="):]
+				if idx2 := strings.Index(rest, ";"); idx2 != -1 {
+					rest = rest[:idx2]
+				}
+				pps, _ := base64.StdEncoding.DecodeString(rest)
+				info.PPS = pps
+			}
+		}
+	}
 }
 
 func findMdatDataOffset(data []byte, size int64) (int64, int64, error) {
@@ -185,79 +223,70 @@ func findMdatDataOffset(data []byte, size int64) (int64, int64, error) {
 	return 0, 0, fmt.Errorf("mdat atom not found")
 }
 
+func findCodecAnchors(mdat []byte) (bool, bool) {
+	hasHEVC := false
+	hasH264 := false
+
+	for i := 0; i < len(mdat)-4; i++ {
+		length := int(binary.BigEndian.Uint32(mdat[i : i+4]))
+		if length < 10 || length > 1000000 || i+4+length > len(mdat) {
+			continue
+		}
+		b := mdat[i+4]
+		forbidden := (b >> 7) & 1
+		if forbidden != 0 {
+			continue
+		}
+		hevcType := (b >> 1) & 0x3f
+		h264Type := b & 0x1f
+
+		if hevcType == nalTypeVPS || hevcType == nalTypeSPS || hevcType == nalTypePPS {
+			hasHEVC = true
+		}
+		if h264Type == nalTypeH264SPS || h264Type == nalTypeH264PPS {
+			hasH264 = true
+		}
+
+		if hasHEVC && hasH264 {
+			break
+		}
+	}
+
+	return hasHEVC, hasH264
+}
+
 func findValidVPS(mdat []byte) []int {
 	var candidates []int
-	mdatLen := int64(len(mdat))
+	mdatLen := len(mdat)
 
-	for i := int64(0); i < mdatLen-100; i++ {
-		length := int64(binary.BigEndian.Uint32(mdat[i : i+4]))
-		if length < 20 || length > 200 || i+4+length >= mdatLen {
+	for i := 0; i < mdatLen-100; i++ {
+		length := int(binary.BigEndian.Uint32(mdat[i : i+4]))
+		if length < 20 || length > 1000000 || i+4+length > mdatLen {
 			continue
 		}
 		b := mdat[i+4]
 		if (b>>7)&1 != 0 || (b>>1)&0x3f != nalTypeVPS {
 			continue
 		}
-
-		spsPos := i + 4 + length
-		if spsPos+9 >= mdatLen {
-			continue
-		}
-		spsLen := int64(binary.BigEndian.Uint32(mdat[spsPos : spsPos+4]))
-		if spsLen < 10 || spsLen > 1000 {
-			continue
-		}
-		spsB := mdat[spsPos+4]
-		if (spsB>>7)&1 != 0 || (spsB>>1)&0x3f != nalTypeSPS {
-			continue
-		}
-
-		ppsPos := spsPos + 4 + spsLen
-		if ppsPos+5 >= mdatLen {
-			continue
-		}
-		ppsLen := int64(binary.BigEndian.Uint32(mdat[ppsPos : ppsPos+4]))
-		if ppsLen < 2 || ppsLen > 200 {
-			continue
-		}
-		ppsB := mdat[ppsPos+4]
-		if (ppsB>>7)&1 != 0 || (ppsB>>1)&0x3f != nalTypePPS {
-			continue
-		}
-
-		candidates = append(candidates, int(i))
+		candidates = append(candidates, i)
 	}
 	return candidates
 }
 
 func findValidSPS(mdat []byte) []int {
 	var candidates []int
-	mdatLen := int64(len(mdat))
+	mdatLen := len(mdat)
 
-	for i := int64(0); i < mdatLen-100; i++ {
-		length := int64(binary.BigEndian.Uint32(mdat[i : i+4]))
-		if length < 10 || length > 1000 || i+4+length >= mdatLen {
+	for i := 0; i < mdatLen-100; i++ {
+		length := int(binary.BigEndian.Uint32(mdat[i : i+4]))
+		if length < 10 || length > 1000000 || i+4+length > mdatLen {
 			continue
 		}
 		b := mdat[i+4]
 		if (b>>7)&1 != 0 || (b&0x1f) != nalTypeH264SPS {
 			continue
 		}
-
-		ppsPos := i + 4 + length
-		if ppsPos+5 >= mdatLen {
-			continue
-		}
-		ppsLen := int64(binary.BigEndian.Uint32(mdat[ppsPos : ppsPos+4]))
-		if ppsLen < 2 || ppsLen > 200 {
-			continue
-		}
-		ppsB := mdat[ppsPos+4]
-		if (ppsB>>7)&1 != 0 || (ppsB&0x1f) != nalTypeH264PPS {
-			continue
-		}
-
-		candidates = append(candidates, int(i))
+		candidates = append(candidates, i)
 	}
 	return candidates
 }
@@ -409,14 +438,30 @@ func RecoverWithFFmpeg(badPath, camera, go2rtcURL string) error {
 	hevcAnchors := findValidVPS(mdat)
 	h264Anchors := findValidSPS(mdat)
 
-	isHEVC := len(hevcAnchors) >= 2
-	isH264 := len(h264Anchors) >= 2
+	codecInfo, _ := FetchGo2RTCStreamInfo(go2rtcURL, camera)
+
+	var isHEVC, isH264 bool
+	if codecInfo != nil && codecInfo.CodecName != "" {
+		isHEVC = codecInfo.CodecName == "hevc"
+		isH264 = codecInfo.CodecName == "h264"
+	} else {
+		isHEVC = len(hevcAnchors) > 0
+		isH264 = len(h264Anchors) > 0
+	}
+
+	if !isHEVC && !isH264 {
+		hevcPresent, h264Present := findCodecAnchors(mdat)
+		isHEVC = hevcPresent
+		isH264 = h264Present
+	}
 
 	if !isHEVC && !isH264 {
 		return fmt.Errorf("no valid VPS/SPS sequences found in mdat")
 	}
 
-	codecInfo, _ := FetchGo2RTCStreamInfo(go2rtcURL, camera)
+	if isHEVC && isH264 {
+		isH264 = false
+	}
 
 	if codecInfo != nil && (codecInfo.Width == 0 || codecInfo.Height == 0) && codecInfo.SPS != nil {
 		codecInfo.Width, codecInfo.Height = parseSPSResolution(codecInfo.SPS)
@@ -429,7 +474,7 @@ func RecoverWithFFmpeg(badPath, camera, go2rtcURL string) error {
 			header = append(header, codecInfo.SPS...)
 			header = append(header, 0x00, 0x00, 0x00, 0x01)
 			header = append(header, codecInfo.PPS...)
-		} else {
+		} else if len(h264Anchors) > 0 {
 			firstSPS := int64(h264Anchors[0])
 			spsLen := int64(binary.BigEndian.Uint32(mdat[firstSPS : firstSPS+4]))
 			ppsPos := firstSPS + 4 + spsLen
@@ -451,13 +496,20 @@ func RecoverWithFFmpeg(badPath, camera, go2rtcURL string) error {
 			header = append(header, codecInfo.SPS...)
 			header = append(header, 0x00, 0x00, 0x00, 0x01)
 			header = append(header, codecInfo.PPS...)
-		} else {
-			firstVPS := int64(hevcAnchors[0])
-			vpsLen := int64(binary.BigEndian.Uint32(mdat[firstVPS : firstVPS+4]))
-			spsPos := firstVPS + 4 + vpsLen
-			spsLen := int64(binary.BigEndian.Uint32(mdat[spsPos : spsPos+4]))
-			ppsPos := spsPos + 4 + spsLen
-			ppsLen := int64(binary.BigEndian.Uint32(mdat[ppsPos : ppsPos+4]))
+	} else if len(hevcAnchors) > 0 {
+		firstVPS := int64(hevcAnchors[0])
+		vpsLen := int64(binary.BigEndian.Uint32(mdat[firstVPS : firstVPS+4]))
+		spsPos := firstVPS + 4 + vpsLen
+		if spsPos+4 > int64(len(mdat)) {
+			spsPos = 0
+		}
+		spsLen := int64(binary.BigEndian.Uint32(mdat[spsPos : spsPos+4]))
+		ppsPos := spsPos + 4 + spsLen
+		if ppsPos+4 > int64(len(mdat)) {
+			ppsPos = 0
+		}
+		ppsLen := int64(binary.BigEndian.Uint32(mdat[ppsPos : ppsPos+4]))
+		if spsPos > 0 && ppsPos > 0 && spsPos+4+spsLen <= int64(len(mdat)) && ppsPos+4+ppsLen <= int64(len(mdat)) {
 			vps := mdat[firstVPS+4 : firstVPS+4+vpsLen]
 			sps := mdat[spsPos+4 : spsPos+4+spsLen]
 			pps := mdat[ppsPos+4 : ppsPos+4+ppsLen]
@@ -469,48 +521,10 @@ func RecoverWithFFmpeg(badPath, camera, go2rtcURL string) error {
 			header = append(header, pps...)
 		}
 	}
+	}
 
 	var annexB []byte
 	pos := 0
-	validTypes := validNALTypesHEVC
-	if isH264 {
-		validTypes = validNALTypesH264
-	}
-
-	skipEnd := len(mdat)
-	for i, anchor := range hevcAnchors {
-		if i > 0 {
-			skipEnd = anchor
-			break
-		}
-	}
-	if isH264 && len(h264Anchors) > 0 {
-		skipEnd = h264Anchors[0]
-	}
-
-	for pos < skipEnd-4 {
-		length := int(binary.BigEndian.Uint32(mdat[pos : pos+4]))
-		if length <= 2 || length >= 1000000 || pos+4+length > len(mdat) {
-			pos++
-			continue
-		}
-		b := mdat[pos+4]
-		forbidden := (b >> 7) & 1
-		if isH264 {
-			nalType := b & 0x1f
-			if forbidden == 0 && validTypes[nalType] {
-				pos++
-				continue
-			}
-		} else {
-			nalType := (b >> 1) & 0x3f
-			if forbidden == 0 && validTypes[nalType] {
-				pos++
-				continue
-			}
-		}
-		break
-	}
 
 	for pos < len(mdat)-4 {
 		length := int(binary.BigEndian.Uint32(mdat[pos : pos+4]))
@@ -520,19 +534,24 @@ func RecoverWithFFmpeg(badPath, camera, go2rtcURL string) error {
 			if isH264 {
 				nalType := b & 0x1f
 				if forbidden != 0 || !validNALTypesH264[nalType] {
-					break
+					pos++
+					continue
 				}
 			} else {
 				nalType := (b >> 1) & 0x3f
 				if forbidden != 0 || !validNALTypesHEVC[nalType] {
-					break
+					pos++
+					continue
 				}
+			}
+			if len(annexB) > 50*1024*1024 {
+				break
 			}
 			annexB = append(annexB, 0x00, 0x00, 0x00, 0x01)
 			annexB = append(annexB, mdat[pos+4:pos+4+length]...)
 			pos += 4 + length
 		} else {
-			break
+			pos++
 		}
 	}
 
@@ -553,7 +572,9 @@ func RecoverWithFFmpeg(badPath, camera, go2rtcURL string) error {
 
 	fixedPath := badPath + ".fixed"
 
-	args := []string{"-v", "warning", "-y", "-fflags", "+genpts+discardcorrupt",
+	args := []string{"-v", "warning", "-y",
+		"-analyzeduration", "100000000", "-probesize", "1000000",
+		"-fflags", "+genpts+discardcorrupt",
 		"-err_detect", "ignore_err",
 		"-f", format, "-i", streamPath,
 		"-c", "copy", "-movflags", "+faststart", "-f", "mp4", fixedPath}
