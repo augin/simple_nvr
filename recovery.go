@@ -635,7 +635,7 @@ func RecoverWithFFmpeg(badPath, camera, go2rtcURL string) error {
 	for pos < len(mdat)-4 {
 		length := int(binary.BigEndian.Uint32(mdat[pos : pos+4]))
 		if length > 2 && length < 50000000 && pos+4+length <= len(mdat) {
-			if len(annexB) > 2*1024*1024*1024 {
+			if int64(len(annexB)) > 2*1024*1024*1024 {
 				break
 			}
 			annexB = append(annexB, 0x00, 0x00, 0x00, 0x01)

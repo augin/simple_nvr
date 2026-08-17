@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-var version = "2.11.3"
+var version = "2.11.4"
 
 func findStaticDir() string {
 	exe, err := os.Executable()
