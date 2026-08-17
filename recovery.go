@@ -36,17 +36,6 @@ const (
 	nalTypeH264IDR = 5
 )
 
-var validNALTypesHEVC = map[byte]bool{
-	nalTypeVPS: true, nalTypeSPS: true, nalTypePPS: true,
-	nalTypeIDR: true, nalTypeIDR2: true, nalTypeSEI: true, nalTypeSEI2: true,
-	nalTypeSEI3: true, nalTypeSEI4: true, nalTypeSEI5: true, nalTypeSEI6: true,
-	nalTypeTrailN: true, nalTypeTrailR: true,
-}
-
-var validNALTypesH264 = map[byte]bool{
-	nalTypeH264SPS: true, nalTypeH264PPS: true, nalTypeH264IDR: true,
-}
-
 type Go2RTCStreamInfo struct {
 	CodecName string
 	Profile   string
@@ -193,22 +182,17 @@ func parseSDP(sdp string, info *Go2RTCStreamInfo) {
 }
 
 func findMdatDataOffset(data []byte, size int64) (int64, int64, error) {
-	header := make([]byte, 8)
 	for pos := int64(0); pos < size-8; pos++ {
-		if _, err := bytes.NewReader(data).ReadAt(header, pos); err != nil {
-			return 0, 0, err
-		}
-		atomSize := int64(binary.BigEndian.Uint32(header[:4]))
-		atomType := string(header[4:8])
+		atomSize := int64(binary.BigEndian.Uint32(data[pos : pos+4]))
+		atomType := string(data[pos+4 : pos+8])
 		if atomType == "mdat" {
 			atomStart := pos
 			dataOffset := pos + 8
 			if atomSize == 1 {
-				extSizeBuf := make([]byte, 8)
-				if _, err := bytes.NewReader(data).ReadAt(extSizeBuf, pos+8); err != nil {
-					return 0, 0, err
+				if pos+16 > size {
+					return 0, 0, fmt.Errorf("mdat extended size out of range")
 				}
-				atomSize = int64(binary.BigEndian.Uint64(extSizeBuf))
+				atomSize = int64(binary.BigEndian.Uint64(data[pos+8 : pos+16]))
 				dataOffset = pos + 16
 			}
 			if atomSize == 0 || (atomSize >= 8 && pos+atomSize <= size) {
@@ -233,10 +217,6 @@ func findCodecAnchors(mdat []byte) (bool, bool) {
 			continue
 		}
 		b := mdat[i+4]
-		forbidden := (b >> 7) & 1
-		if forbidden != 0 {
-			continue
-		}
 		hevcType := (b >> 1) & 0x3f
 		h264Type := b & 0x1f
 
@@ -261,7 +241,7 @@ func findValidVPS(mdat []byte) []int {
 
 	for i := 0; i < mdatLen-100; i++ {
 		length := int(binary.BigEndian.Uint32(mdat[i : i+4]))
-		if length < 20 || length > 1000000 || i+4+length > mdatLen {
+		if length < 20 || length > 200 || i+4+length > mdatLen {
 			continue
 		}
 		b := mdat[i+4]
@@ -279,11 +259,47 @@ func findValidSPS(mdat []byte) []int {
 
 	for i := 0; i < mdatLen-100; i++ {
 		length := int(binary.BigEndian.Uint32(mdat[i : i+4]))
-		if length < 10 || length > 1000000 || i+4+length > mdatLen {
+		if length < 10 || length > 1000 || i+4+length > mdatLen {
 			continue
 		}
 		b := mdat[i+4]
 		if (b>>7)&1 != 0 || (b&0x1f) != nalTypeH264SPS {
+			continue
+		}
+		candidates = append(candidates, i)
+	}
+	return candidates
+}
+
+func findValidHEVCSPS(mdat []byte) []int {
+	var candidates []int
+	mdatLen := len(mdat)
+
+	for i := 0; i < mdatLen-100; i++ {
+		length := int(binary.BigEndian.Uint32(mdat[i : i+4]))
+		if length < 10 || length > 1000 || i+4+length > mdatLen {
+			continue
+		}
+		b := mdat[i+4]
+		if (b>>7)&1 != 0 || (b>>1)&0x3f != nalTypeSPS {
+			continue
+		}
+		candidates = append(candidates, i)
+	}
+	return candidates
+}
+
+func findValidHEVCPPS(mdat []byte) []int {
+	var candidates []int
+	mdatLen := len(mdat)
+
+	for i := 0; i < mdatLen-100; i++ {
+		length := int(binary.BigEndian.Uint32(mdat[i : i+4]))
+		if length < 10 || length > 200 || i+4+length > mdatLen {
+			continue
+		}
+		b := mdat[i+4]
+		if (b>>7)&1 != 0 || (b>>1)&0x3f != nalTypePPS {
 			continue
 		}
 		candidates = append(candidates, i)
@@ -399,6 +415,114 @@ func parseSPSResolution(sps []byte) (int, int) {
 	return width, height
 }
 
+func extractAllParamSets(mdat []byte, isHEVC bool) []byte {
+	var paramSets []byte
+	maxSets := 10
+	if isHEVC {
+		vpsAnchors := findValidVPS(mdat)
+		spsAnchors := findValidHEVCSPS(mdat)
+		ppsAnchors := findValidHEVCPPS(mdat)
+		for _, i := range vpsAnchors {
+			if maxSets <= 0 {
+				break
+			}
+			length := int(binary.BigEndian.Uint32(mdat[i : i+4]))
+			if length > 0 && length < 10000 && i+4+length <= len(mdat) {
+				paramSets = append(paramSets, 0x00, 0x00, 0x00, 0x01)
+				paramSets = append(paramSets, mdat[i+4:i+4+length]...)
+				maxSets--
+			}
+		}
+		maxSets = 10
+		for _, i := range spsAnchors {
+			if maxSets <= 0 {
+				break
+			}
+			length := int(binary.BigEndian.Uint32(mdat[i : i+4]))
+			if length > 0 && length < 10000 && i+4+length <= len(mdat) {
+				paramSets = append(paramSets, 0x00, 0x00, 0x00, 0x01)
+				paramSets = append(paramSets, mdat[i+4:i+4+length]...)
+				maxSets--
+			}
+		}
+		maxSets = 10
+		for _, i := range ppsAnchors {
+			if maxSets <= 0 {
+				break
+			}
+			length := int(binary.BigEndian.Uint32(mdat[i : i+4]))
+			if length > 0 && length < 10000 && i+4+length <= len(mdat) {
+				paramSets = append(paramSets, 0x00, 0x00, 0x00, 0x01)
+				paramSets = append(paramSets, mdat[i+4:i+4+length]...)
+				maxSets--
+			}
+		}
+	} else {
+		spsAnchors := findValidSPS(mdat)
+		ppsAnchors := findValidHEVCPPS(mdat)
+		for _, i := range spsAnchors {
+			if maxSets <= 0 {
+				break
+			}
+			length := int(binary.BigEndian.Uint32(mdat[i : i+4]))
+			if length > 0 && length < 10000 && i+4+length <= len(mdat) {
+				paramSets = append(paramSets, 0x00, 0x00, 0x00, 0x01)
+				paramSets = append(paramSets, mdat[i+4:i+4+length]...)
+				maxSets--
+			}
+		}
+		maxSets = 10
+		for _, i := range ppsAnchors {
+			if maxSets <= 0 {
+				break
+			}
+			length := int(binary.BigEndian.Uint32(mdat[i : i+4]))
+			if length > 0 && length < 10000 && i+4+length <= len(mdat) {
+				paramSets = append(paramSets, 0x00, 0x00, 0x00, 0x01)
+				paramSets = append(paramSets, mdat[i+4:i+4+length]...)
+				maxSets--
+			}
+		}
+	}
+	return paramSets
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func tryFFmpegMovRepair(badPath string) (bool, error) {
+	fixedPath := badPath + ".fixed"
+	args := []string{"-v", "warning", "-y",
+		"-fflags", "+genpts+discardcorrupt",
+		"-err_detect", "ignore_err",
+		"-f", "mov", "-i", badPath,
+		"-c", "copy", "-movflags", "+faststart", "-f", "mp4", fixedPath}
+
+	cmd := exec.Command("ffmpeg", args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		os.Remove(fixedPath)
+		return false, fmt.Errorf("ffmpeg mov failed: %v: %s", err, stderr.String())
+	}
+
+	fiFixed, err := os.Stat(fixedPath)
+	if err != nil || fiFixed.Size() == 0 {
+		os.Remove(fixedPath)
+		return false, fmt.Errorf("ffmpeg produced empty file")
+	}
+
+	os.Rename(badPath, badPath+".bak")
+	os.Rename(fixedPath, badPath)
+
+	log.Printf("Recovered %s using ffmpeg mov demuxer (size: %d)", badPath, fiFixed.Size())
+	return true, nil
+}
+
 func RecoverWithFFmpeg(badPath, camera, go2rtcURL string) error {
 	f, err := os.Open(badPath)
 	if err != nil {
@@ -418,6 +542,14 @@ func RecoverWithFFmpeg(badPath, camera, go2rtcURL string) error {
 	data, err := io.ReadAll(f)
 	if err != nil {
 		return fmt.Errorf("read: %w", err)
+	}
+
+	hasMoov := bytes.Contains(data[:minInt(1024, len(data))], []byte("moov"))
+
+	if !hasMoov {
+		if ok, _ := tryFFmpegMovRepair(badPath); ok {
+			return nil
+		}
 	}
 
 	mdatDataOffset, _, err := findMdatDataOffset(data, badSize)
@@ -469,82 +601,41 @@ func RecoverWithFFmpeg(badPath, camera, go2rtcURL string) error {
 
 	var header []byte
 	if isH264 {
-		if codecInfo != nil && codecInfo.SPS != nil && codecInfo.PPS != nil {
-			header = append(header, 0x00, 0x00, 0x00, 0x01)
-			header = append(header, codecInfo.SPS...)
-			header = append(header, 0x00, 0x00, 0x00, 0x01)
-			header = append(header, codecInfo.PPS...)
-		} else if len(h264Anchors) > 0 {
-			firstSPS := int64(h264Anchors[0])
-			spsLen := int64(binary.BigEndian.Uint32(mdat[firstSPS : firstSPS+4]))
-			ppsPos := firstSPS + 4 + spsLen
-			ppsLen := int64(binary.BigEndian.Uint32(mdat[ppsPos : ppsPos+4]))
-			sps := mdat[firstSPS+4 : firstSPS+4+spsLen]
-			pps := mdat[ppsPos+4 : ppsPos+4+ppsLen]
-			header = append(header, 0x00, 0x00, 0x00, 0x01)
-			header = append(header, sps...)
-			header = append(header, 0x00, 0x00, 0x00, 0x01)
-			header = append(header, pps...)
-		}
+		header = extractAllParamSets(mdat, false)
 	}
 
 	if isHEVC {
-		if codecInfo != nil && codecInfo.VPS != nil && codecInfo.SPS != nil && codecInfo.PPS != nil {
-			header = append(header, 0x00, 0x00, 0x00, 0x01)
-			header = append(header, codecInfo.VPS...)
-			header = append(header, 0x00, 0x00, 0x00, 0x01)
-			header = append(header, codecInfo.SPS...)
-			header = append(header, 0x00, 0x00, 0x00, 0x01)
-			header = append(header, codecInfo.PPS...)
-	} else if len(hevcAnchors) > 0 {
-		firstVPS := int64(hevcAnchors[0])
-		vpsLen := int64(binary.BigEndian.Uint32(mdat[firstVPS : firstVPS+4]))
-		spsPos := firstVPS + 4 + vpsLen
-		if spsPos+4 > int64(len(mdat)) {
-			spsPos = 0
-		}
-		spsLen := int64(binary.BigEndian.Uint32(mdat[spsPos : spsPos+4]))
-		ppsPos := spsPos + 4 + spsLen
-		if ppsPos+4 > int64(len(mdat)) {
-			ppsPos = 0
-		}
-		ppsLen := int64(binary.BigEndian.Uint32(mdat[ppsPos : ppsPos+4]))
-		if spsPos > 0 && ppsPos > 0 && spsPos+4+spsLen <= int64(len(mdat)) && ppsPos+4+ppsLen <= int64(len(mdat)) {
-			vps := mdat[firstVPS+4 : firstVPS+4+vpsLen]
-			sps := mdat[spsPos+4 : spsPos+4+spsLen]
-			pps := mdat[ppsPos+4 : ppsPos+4+ppsLen]
-			header = append(header, 0x00, 0x00, 0x00, 0x01)
-			header = append(header, vps...)
-			header = append(header, 0x00, 0x00, 0x00, 0x01)
-			header = append(header, sps...)
-			header = append(header, 0x00, 0x00, 0x00, 0x01)
-			header = append(header, pps...)
-		}
-	}
+		header = extractAllParamSets(mdat, true)
 	}
 
 	var annexB []byte
 	pos := 0
 
-	for pos < len(mdat)-4 {
-		length := int(binary.BigEndian.Uint32(mdat[pos : pos+4]))
-		if length > 2 && length < 1000000 && pos+4+length <= len(mdat) {
-			b := mdat[pos+4]
-			forbidden := (b >> 7) & 1
-			if isH264 {
-				nalType := b & 0x1f
-				if forbidden != 0 || !validNALTypesH264[nalType] {
-					pos++
-					continue
-				}
-			} else {
-				nalType := (b >> 1) & 0x3f
-				if forbidden != 0 || !validNALTypesHEVC[nalType] {
-					pos++
-					continue
+	if isHEVC || isH264 {
+		var allAnchors []int
+		if isHEVC {
+			allAnchors = append(allAnchors, findValidVPS(mdat)...)
+			allAnchors = append(allAnchors, findValidHEVCSPS(mdat)...)
+			allAnchors = append(allAnchors, findValidHEVCPPS(mdat)...)
+		}
+		if isH264 {
+			allAnchors = append(allAnchors, findValidSPS(mdat)...)
+			allAnchors = append(allAnchors, findValidHEVCPPS(mdat)...)
+		}
+		if len(allAnchors) > 0 {
+			pos = allAnchors[0]
+			for _, a := range allAnchors {
+				if a < pos {
+					pos = a
 				}
 			}
-			if len(annexB) > 50*1024*1024 {
+		}
+	}
+
+	for pos < len(mdat)-4 {
+		length := int(binary.BigEndian.Uint32(mdat[pos : pos+4]))
+		if length > 2 && length < 50000000 && pos+4+length <= len(mdat) {
+			if len(annexB) > 2*1024*1024*1024 {
 				break
 			}
 			annexB = append(annexB, 0x00, 0x00, 0x00, 0x01)
