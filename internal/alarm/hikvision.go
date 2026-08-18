@@ -1,4 +1,4 @@
-package main
+package alarm
 
 import (
 	"encoding/xml"
@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"simple_nvr/internal/config"
 )
 
 type HikvisionEvent struct {
@@ -22,7 +24,7 @@ type HikvisionEvent struct {
 }
 
 type HikvisionAlarmServer struct {
-	config   *NVRConfig
+	config   *config.NVRConfig
 	alarm    *AlarmServer
 	ipMap    map[string]string
 	running  bool
@@ -30,10 +32,10 @@ type HikvisionAlarmServer struct {
 	stopCh   chan struct{}
 }
 
-func NewHikvisionAlarmServer(config *NVRConfig, alarm *AlarmServer, ipMap map[string]string) *HikvisionAlarmServer {
+func NewHikvisionAlarmServer(cfg *config.NVRConfig, alarmServer *AlarmServer, ipMap map[string]string) *HikvisionAlarmServer {
 	return &HikvisionAlarmServer{
-		config: config,
-		alarm:  alarm,
+		config: cfg,
+		alarm:  alarmServer,
 		ipMap:  ipMap,
 		stopCh: make(chan struct{}),
 	}
@@ -131,8 +133,8 @@ func (s *HikvisionAlarmServer) handleAlarm(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	s.alarm.addLog(event)
-	s.alarm.saveEvent(event)
+	s.alarm.AddLog(event)
+	s.alarm.SaveEvent(event)
 
 	cameraLog := event.Camera
 	if cameraLog == "" {
@@ -141,7 +143,7 @@ func (s *HikvisionAlarmServer) handleAlarm(w http.ResponseWriter, r *http.Reques
 	log.Printf("Hikvision alarm: camera=%s type=%s event=%s status=%s",
 		cameraLog, event.Type, event.Event, event.Status)
 
-	s.alarm.publishMQTT(event)
+	s.alarm.PublishMQTT(event)
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))

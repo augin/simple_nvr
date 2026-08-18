@@ -1,4 +1,4 @@
-package main
+package recovery
 
 import (
 	"encoding/base64"
@@ -478,11 +478,4 @@ func extractAllParamSets(mdat []byte, isHEVC bool) []byte {
 		}
 	}
 	return paramSets
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

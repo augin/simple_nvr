@@ -1,4 +1,4 @@
-package main
+package api
 
 import (
 	"bytes"
@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"simple_nvr/internal/recovery"
 )
 
 type brokenFile struct {
@@ -288,7 +290,7 @@ func (a *API) HandleToolsRepair(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("repair: attempting ffmpeg recovery for %s (camera=%s)", req.Path, camera)
 
-	if err := recoverWithFFmpeg(req.Path, camera, a.go2rtcAPIBase()); err != nil {
+	if err := recovery.RecoverWithFFmpeg(req.Path, camera, a.go2rtcAPIBase()); err != nil {
 		log.Printf("repair failed %s: %v", req.Path, err)
 		json.NewEncoder(w).Encode(map[string]any{"status": "error", "message": fmt.Sprintf("Восстановление невозможно: %v", err)})
 		return

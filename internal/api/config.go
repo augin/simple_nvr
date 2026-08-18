@@ -1,10 +1,13 @@
-package main
+package api
 
 import (
 	"encoding/json"
 	"log"
 	"net/http"
 	"sort"
+
+	"simple_nvr/internal/config"
+	"simple_nvr/internal/recorder"
 )
 
 func (a *API) HandleGetConfig(w http.ResponseWriter, r *http.Request) {
@@ -23,7 +26,7 @@ func (a *API) HandleSaveConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var cfg NVRConfig
+	var cfg config.NVRConfig
 	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
@@ -60,7 +63,7 @@ func (a *API) HandleSaveConfig(w http.ResponseWriter, r *http.Request) {
 		a.config.KioskPort = cfg.KioskPort
 	}
 
-	if err := saveNVRConfig(a.configPath, a.config); err != nil {
+	if err := config.SaveNVRConfig(a.configPath, a.config); err != nil {
 		log.Printf("Error saving config: %v", err)
 		http.Error(w, "save error", http.StatusInternalServerError)
 		return
@@ -74,8 +77,8 @@ func (a *API) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	status := a.recorder.GetStatus()
 	status["storage"] = a.storage.GetStorageInfo()
 
-	if procs, ok := status["processes"].([]*StreamInfo); ok && len(procs) > 1 {
-		go2cfg, err := loadGo2RTCConfig(a.config.Go2RTCConfigPath)
+	if procs, ok := status["processes"].([]*recorder.StreamInfo); ok && len(procs) > 1 {
+		go2cfg, err := config.LoadGo2RTCConfig(a.config.Go2RTCConfigPath)
 		if err == nil {
 			orderMap := make(map[string]int, len(go2cfg.StreamOrder))
 			for i, name := range go2cfg.StreamOrder {

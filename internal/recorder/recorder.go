@@ -1,4 +1,4 @@
-package main
+package recorder
 
 import (
 	"fmt"
@@ -10,6 +10,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"simple_nvr/internal/config"
 )
 
 type StreamInfo struct {
@@ -21,7 +23,7 @@ type StreamInfo struct {
 
 type Recorder struct {
 	mu         sync.Mutex
-	config     *NVRConfig
+	config     *config.NVRConfig
 	processes  map[string]*exec.Cmd
 	streamInfo map[string]*StreamInfo
 	active     bool
@@ -29,9 +31,9 @@ type Recorder struct {
 	epoch      int64
 }
 
-func NewRecorder(config *NVRConfig) *Recorder {
+func NewRecorder(cfg *config.NVRConfig) *Recorder {
 	return &Recorder{
-		config:     config,
+		config:     cfg,
 		processes:  make(map[string]*exec.Cmd),
 		streamInfo: make(map[string]*StreamInfo),
 		duration:   607,
@@ -54,7 +56,7 @@ func (r *Recorder) startRecordingAt(scheduledTime time.Time, durations ...int) {
 
 	log.Printf("Starting recording cycle (%ds) scheduled at %s", dur, scheduledTime.Format("15:04:05"))
 
-	go2cfg, err := loadGo2RTCConfig(r.config.Go2RTCConfigPath)
+	go2cfg, err := config.LoadGo2RTCConfig(r.config.Go2RTCConfigPath)
 	if err != nil {
 		log.Printf("Error loading go2rtc config: %v", err)
 		return
@@ -154,7 +156,7 @@ func (r *Recorder) recordStream(streamName, year, month, day, currentTime string
 		}
 	case <-time.After(time.Duration(duration+30) * time.Second):
 		log.Printf("Stream %s: duration+30s reached, sending SIGTERM", streamName)
-		gracefulStop(cmd, 15*time.Second)
+		GracefulStop(cmd, 15*time.Second)
 		log.Printf("Stream %s recording completed", streamName)
 	}
 
@@ -166,20 +168,18 @@ func (r *Recorder) recordStream(streamName, year, month, day, currentTime string
 	r.mu.Unlock()
 }
 
-func gracefulStop(cmd *exec.Cmd, grace time.Duration) {
+func GracefulStop(cmd *exec.Cmd, grace time.Duration) {
 	if cmd.Process == nil {
 		return
 	}
 	pid := cmd.Process.Pid
 	pgid := -pid
 
-	// Check if process is still alive before sending anything
 	if err := syscall.Kill(pid, 0); err != nil {
 		log.Printf("[stop] PID %d already dead: %v", pid, err)
 		return
 	}
 
-	// Check process state
 	if state, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid)); err == nil {
 		for _, line := range strings.Split(string(state), "\n") {
 			if strings.HasPrefix(line, "State:") {
@@ -206,7 +206,6 @@ func gracefulStop(cmd *exec.Cmd, grace time.Duration) {
 	case <-exited:
 		log.Printf("[stop] PID %d exited gracefully after SIGTERM", pid)
 	case <-timer.C:
-		// Check state before SIGKILL
 		if state, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid)); err == nil {
 			for _, line := range strings.Split(string(state), "\n") {
 				if strings.HasPrefix(line, "State:") {
@@ -260,7 +259,7 @@ func (r *Recorder) StopRecordingStream(name string) {
 
 	if ok && cmd != nil && cmd.Process != nil {
 		log.Printf("Stopping recording stream %s (PID %d)", name, cmd.Process.Pid)
-		gracefulStop(cmd, 5*time.Second)
+		GracefulStop(cmd, 5*time.Second)
 	}
 }
 
@@ -278,7 +277,7 @@ func (r *Recorder) StopRecording() {
 	for _, cmd := range cmds {
 		if cmd != nil && cmd.Process != nil {
 			log.Printf("Stopping recording (PID %d)", cmd.Process.Pid)
-			gracefulStop(cmd, 5*time.Second)
+			GracefulStop(cmd, 5*time.Second)
 		}
 	}
 }
@@ -321,4 +320,8 @@ func (r *Recorder) ActiveRecordings() map[string]bool {
 		}
 	}
 	return paths
+}
+
+func (r *Recorder) Config() *config.NVRConfig {
+	return r.config
 }

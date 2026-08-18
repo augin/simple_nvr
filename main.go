@@ -12,9 +12,18 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"simple_nvr/internal/alarm"
+	"simple_nvr/internal/api"
+	"simple_nvr/internal/auth"
+	"simple_nvr/internal/config"
+	"simple_nvr/internal/kiosk"
+	"simple_nvr/internal/logs"
+	"simple_nvr/internal/recorder"
+	"simple_nvr/internal/storage"
 )
 
-var version = "2.11.6"
+var version = "2.12.0"
 
 func findStaticDir() string {
 	exe, err := os.Executable()
@@ -58,7 +67,7 @@ func main() {
 		*configPath = findConfig()
 	}
 
-	config, err := loadNVRConfig(*configPath)
+	cfg, err := config.LoadNVRConfig(*configPath)
 	if err != nil {
 		log.Fatalf("Error loading config: %v", err)
 	}
@@ -66,12 +75,12 @@ func main() {
 	log.Printf("Simple NVR starting...")
 	log.Printf("Config: %s", *configPath)
 	log.Printf("Static: %s", *staticDir)
-	log.Printf("Base dir: %s", config.BaseDir)
-	log.Printf("Stream server: %s", config.StreamServer)
-	log.Printf("Default camera limit: %d GB, Global limit: %d GB", config.DefaultCameraLimitGB, config.GlobalSizeGB)
+	log.Printf("Base dir: %s", cfg.BaseDir)
+	log.Printf("Stream server: %s", cfg.StreamServer)
+	log.Printf("Default camera limit: %d GB, Global limit: %d GB", cfg.DefaultCameraLimitGB, cfg.GlobalSizeGB)
 
 	var ipMap map[string]string
-	go2cfg, err := loadGo2RTCConfig(config.Go2RTCConfigPath)
+	go2cfg, err := config.LoadGo2RTCConfig(cfg.Go2RTCConfigPath)
 	if err != nil {
 		log.Printf("Warning: could not load go2rtc config: %v", err)
 	} else {
@@ -79,26 +88,26 @@ func main() {
 		log.Printf("IP camera map: %d entries", len(ipMap))
 	}
 
-	recorder := NewRecorder(config)
-	storage := NewStorage(config)
-	alarm := NewAlarmServer(config, ipMap)
-	hikvisionAlarm := NewHikvisionAlarmServer(config, alarm, ipMap)
-	logBuffer := NewLogBuffer(1000)
-	RedirectLogOutput(logBuffer)
-	userStore := NewUserStore(config.UsersFile)
-	api := NewAPI(config, *configPath, recorder, storage, alarm, hikvisionAlarm, logBuffer, userStore)
+	rec := recorder.NewRecorder(cfg)
+	stor := storage.NewStorage(cfg)
+	alarmSrv := alarm.NewAlarmServer(cfg, ipMap)
+	hikvisionAlarm := alarm.NewHikvisionAlarmServer(cfg, alarmSrv, ipMap)
+	logBuffer := logs.NewLogBuffer(1000)
+	logs.RedirectLogOutput(logBuffer)
+	userStore := auth.NewUserStore(cfg.UsersFile)
+	apiSrv := api.NewAPI(cfg, *configPath, rec, stor, alarmSrv, hikvisionAlarm, logBuffer, userStore)
 
-	alarm.LoadRecentEvents(7)
+	alarmSrv.LoadRecentEvents(7)
 
-	go startScheduler(recorder)
+	go startScheduler(rec)
 
-	if config.AlarmEnabled {
-		if err := alarm.Start(); err != nil {
+	if cfg.AlarmEnabled {
+		if err := alarmSrv.Start(); err != nil {
 			log.Printf("Warning: failed to start alarm server: %v", err)
 		}
 	}
 
-	if config.HikvisionEnabled {
+	if cfg.HikvisionEnabled {
 		if err := hikvisionAlarm.Start(); err != nil {
 			log.Printf("Warning: failed to start hikvision alarm server: %v", err)
 		}
@@ -109,9 +118,9 @@ func main() {
 	go func() {
 		sig := <-sigCh
 		log.Printf("Received %v, shutting down...", sig)
-		alarm.Stop()
+		alarmSrv.Stop()
 		hikvisionAlarm.Stop()
-		recorder.StopRecording()
+		rec.StopRecording()
 		os.Exit(0)
 	}()
 
@@ -141,89 +150,89 @@ func main() {
 		http.ServeFile(w, r, filepath.Join(staticPath, "favicon.ico"))
 	})
 
-	mux.HandleFunc("/api/cameras", api.HandleCameras)
-	mux.HandleFunc("/api/files", api.HandleFiles)
-	mux.HandleFunc("/api/video/", api.HandleVideo)
-	mux.HandleFunc("/api/download", api.HandleVideoDownload)
-	mux.HandleFunc("/api/archive/video/", api.HandleArchiveVideo)
-	mux.HandleFunc("/api/archive/delete", api.HandleArchiveDelete)
-	mux.HandleFunc("/api/archive", api.HandleArchive)
-	mux.HandleFunc("/api/status", api.HandleStatus)
-	mux.HandleFunc("/api/storage/cameras", api.HandleCamerasStorage)
-	mux.HandleFunc("/api/record/start", api.HandleRecordStart)
-	mux.HandleFunc("/api/record/stop", api.HandleRecordStop)
+	mux.HandleFunc("/api/cameras", apiSrv.HandleCameras)
+	mux.HandleFunc("/api/files", apiSrv.HandleFiles)
+	mux.HandleFunc("/api/video/", apiSrv.HandleVideo)
+	mux.HandleFunc("/api/download", apiSrv.HandleVideoDownload)
+	mux.HandleFunc("/api/archive/video/", apiSrv.HandleArchiveVideo)
+	mux.HandleFunc("/api/archive/delete", apiSrv.HandleArchiveDelete)
+	mux.HandleFunc("/api/archive", apiSrv.HandleArchive)
+	mux.HandleFunc("/api/status", apiSrv.HandleStatus)
+	mux.HandleFunc("/api/storage/cameras", apiSrv.HandleCamerasStorage)
+	mux.HandleFunc("/api/record/start", apiSrv.HandleRecordStart)
+	mux.HandleFunc("/api/record/stop", apiSrv.HandleRecordStop)
 	mux.HandleFunc("/api/config", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			api.HandleGetConfig(w, r)
+			apiSrv.HandleGetConfig(w, r)
 		case http.MethodPost:
-			api.HandleSaveConfig(w, r)
+			apiSrv.HandleSaveConfig(w, r)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
 
-	mux.HandleFunc("/api/alarm/status", api.HandleAlarmStatus)
-	mux.HandleFunc("/api/alarm/start", api.HandleAlarmStart)
-	mux.HandleFunc("/api/alarm/stop", api.HandleAlarmStop)
-	mux.HandleFunc("/api/alarm/log", api.HandleAlarmLog)
-	mux.HandleFunc("/api/alarm/clear", api.HandleAlarmClear)
-	mux.HandleFunc("/api/alarms/range", api.HandleAlarmsRange)
+	mux.HandleFunc("/api/alarm/status", apiSrv.HandleAlarmStatus)
+	mux.HandleFunc("/api/alarm/start", apiSrv.HandleAlarmStart)
+	mux.HandleFunc("/api/alarm/stop", apiSrv.HandleAlarmStop)
+	mux.HandleFunc("/api/alarm/log", apiSrv.HandleAlarmLog)
+	mux.HandleFunc("/api/alarm/clear", apiSrv.HandleAlarmClear)
+	mux.HandleFunc("/api/alarms/range", apiSrv.HandleAlarmsRange)
 
-	mux.HandleFunc("/api/hikvision/start", api.HandleHikvisionAlarmStart)
-	mux.HandleFunc("/api/hikvision/stop", api.HandleHikvisionAlarmStop)
+	mux.HandleFunc("/api/hikvision/start", apiSrv.HandleHikvisionAlarmStart)
+	mux.HandleFunc("/api/hikvision/stop", apiSrv.HandleHikvisionAlarmStop)
 
-	mux.HandleFunc("/api/go2rtc/status", api.HandleGo2RTCStatus)
-	mux.HandleFunc("/api/go2rtc/restart", api.HandleGo2RTCRestart)
-	mux.HandleFunc("/api/go2rtc/update", api.HandleGo2RTCUpdate)
-	mux.HandleFunc("/api/go2rtc/install", api.HandleGo2RTCInstall)
-	mux.HandleFunc("/api/go2rtc/cameras", api.HandleGo2RTCCameras)
-	mux.HandleFunc("/api/go2rtc/reorder", api.HandleGo2RTCReorder)
+	mux.HandleFunc("/api/go2rtc/status", apiSrv.HandleGo2RTCStatus)
+	mux.HandleFunc("/api/go2rtc/restart", apiSrv.HandleGo2RTCRestart)
+	mux.HandleFunc("/api/go2rtc/update", apiSrv.HandleGo2RTCUpdate)
+	mux.HandleFunc("/api/go2rtc/install", apiSrv.HandleGo2RTCInstall)
+	mux.HandleFunc("/api/go2rtc/cameras", apiSrv.HandleGo2RTCCameras)
+	mux.HandleFunc("/api/go2rtc/reorder", apiSrv.HandleGo2RTCReorder)
 
-	mux.HandleFunc("/api/logs", api.HandleLogs)
-	mux.HandleFunc("/api/logs/clear", api.HandleLogsClear)
+	mux.HandleFunc("/api/logs", apiSrv.HandleLogs)
+	mux.HandleFunc("/api/logs/clear", apiSrv.HandleLogsClear)
 
-	mux.HandleFunc("/api/tools/scan", api.HandleToolsScanStart)
-	mux.HandleFunc("/api/tools/scan/status", api.HandleToolsScanStatus)
-	mux.HandleFunc("/api/tools/repair", api.HandleToolsRepair)
+	mux.HandleFunc("/api/tools/scan", apiSrv.HandleToolsScanStart)
+	mux.HandleFunc("/api/tools/scan/status", apiSrv.HandleToolsScanStatus)
+	mux.HandleFunc("/api/tools/repair", apiSrv.HandleToolsRepair)
 
-	mux.HandleFunc("/api/auth/login", api.HandleLogin)
-	mux.HandleFunc("/api/auth/logout", api.HandleLogout)
-	mux.HandleFunc("/api/auth/me", api.HandleMe)
-	mux.HandleFunc("/api/auth/check", api.HandleAuthCheck)
+	mux.HandleFunc("/api/auth/login", apiSrv.HandleLogin)
+	mux.HandleFunc("/api/auth/logout", apiSrv.HandleLogout)
+	mux.HandleFunc("/api/auth/me", apiSrv.HandleMe)
+	mux.HandleFunc("/api/auth/check", apiSrv.HandleAuthCheck)
 	mux.HandleFunc("/api/users", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			RequireAdmin(api.HandleGetUsers)(w, r)
+			auth.RequireAdmin(apiSrv.HandleGetUsers)(w, r)
 		case http.MethodPost:
-			api.HandleAddUser(w, r)
+			apiSrv.HandleAddUser(w, r)
 		case http.MethodDelete:
-			RequireAdmin(api.HandleDeleteUser)(w, r)
+			auth.RequireAdmin(apiSrv.HandleDeleteUser)(w, r)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
-	mux.HandleFunc("/api/users/change-password", api.HandleChangePassword)
+	mux.HandleFunc("/api/users/change-password", apiSrv.HandleChangePassword)
 
 	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"version": version})
 	})
 
-	addr := fmt.Sprintf(":%d", config.HTTPPort)
+	addr := fmt.Sprintf(":%d", cfg.HTTPPort)
 	log.Printf("Server starting on %s", addr)
-	log.Printf("Users file: %s", config.UsersFile)
+	log.Printf("Users file: %s", cfg.UsersFile)
 
-	if config.KioskEnabled {
-		kiosk := NewKioskServer(config)
-		kiosk.Start()
-		log.Printf("Kiosk mode enabled on port %d", config.KioskPort)
+	if cfg.KioskEnabled {
+		k := kiosk.NewKioskServer(cfg)
+		k.Start()
+		log.Printf("Kiosk mode enabled on port %d", cfg.KioskPort)
 	}
 
 	log.Fatal(http.ListenAndServe(addr, userStore.RequireAuth(mux)))
 }
 
-func startScheduler(recorder *Recorder) {
+func startScheduler(rec *recorder.Recorder) {
 	now := time.Now()
 	minute := now.Minute()
 	second := now.Second()
@@ -231,7 +240,7 @@ func startScheduler(recorder *Recorder) {
 	remaining := (nextInterval - minute) * 60 - second
 
 	log.Printf("First recording now: %ds until :%02d:00 (+7s overlap)", remaining, nextInterval%60)
-	recorder.StartRecording(remaining + 7)
+	rec.StartRecording(remaining + 7)
 
 	for {
 		now := time.Now()
@@ -246,9 +255,9 @@ func startScheduler(recorder *Recorder) {
 		time.Sleep(nextTick.Sub(now))
 
 		go func() {
-			storage := NewStorage(recorder.config)
-			storage.CleanCameraFolders()
+			s := storage.NewStorage(rec.Config())
+			s.CleanCameraFolders()
 		}()
-		recorder.StartRecordingScheduled(nextTick, 607)
+		rec.StartRecordingScheduled(nextTick, 607)
 	}
 }

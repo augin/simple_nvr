@@ -1,10 +1,13 @@
-package main
+package api
 
 import (
 	"encoding/json"
 	"net/http"
 	"path/filepath"
 	"strconv"
+
+	"simple_nvr/internal/alarm"
+	"simple_nvr/internal/config"
 )
 
 func (a *API) HandleAlarmStatus(w http.ResponseWriter, r *http.Request) {
@@ -12,8 +15,8 @@ func (a *API) HandleAlarmStatus(w http.ResponseWriter, r *http.Request) {
 	hikvisionStatus := a.hikvisionAlarm.GetStatus()
 
 	status := map[string]any{
-		"dahua":     dahuaStatus,
-		"hikvision": hikvisionStatus,
+		"dahua":       dahuaStatus,
+		"hikvision":   hikvisionStatus,
 		"event_count": dahuaStatus["event_count"],
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -37,7 +40,7 @@ func (a *API) HandleAlarmStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.config.AlarmEnabled = true
-	saveNVRConfig(a.configPath, a.config)
+	config.SaveNVRConfig(a.configPath, a.config)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "started"})
@@ -57,7 +60,7 @@ func (a *API) HandleAlarmStop(w http.ResponseWriter, r *http.Request) {
 	a.alarm.Stop()
 
 	a.config.AlarmEnabled = false
-	saveNVRConfig(a.configPath, a.config)
+	config.SaveNVRConfig(a.configPath, a.config)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "stopped"})
@@ -80,7 +83,7 @@ func (a *API) HandleHikvisionAlarmStart(w http.ResponseWriter, r *http.Request) 
 	}
 
 	a.config.HikvisionEnabled = true
-	saveNVRConfig(a.configPath, a.config)
+	config.SaveNVRConfig(a.configPath, a.config)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "started"})
@@ -100,7 +103,7 @@ func (a *API) HandleHikvisionAlarmStop(w http.ResponseWriter, r *http.Request) {
 	a.hikvisionAlarm.Stop()
 
 	a.config.HikvisionEnabled = false
-	saveNVRConfig(a.configPath, a.config)
+	config.SaveNVRConfig(a.configPath, a.config)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "stopped"})
@@ -127,15 +130,15 @@ func (a *API) HandleAlarmsRange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filePath := filepath.Join(alarmDir, date+".jsonl")
-	events, err := readEventsFile(filePath)
+	filePath := filepath.Join(alarm.AlarmDir, date+".jsonl")
+	events, err := alarm.ReadEventsFile(filePath)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode([]AlarmEvent{})
+		json.NewEncoder(w).Encode([]alarm.AlarmEvent{})
 		return
 	}
 
-	filtered := make([]AlarmEvent, 0)
+	filtered := make([]alarm.AlarmEvent, 0)
 	for _, e := range events {
 		if e.Camera == camera {
 			filtered = append(filtered, e)

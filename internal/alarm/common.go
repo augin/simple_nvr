@@ -1,4 +1,4 @@
-package main
+package alarm
 
 import (
 	"bufio"
@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	maxAlarmLog   = 500
-	alarmDir      = "/var/lib/simple-nvr/alarms"
-	retentionDays = 30
+	MaxAlarmLog   = 500
+	AlarmDir      = "/var/lib/simple-nvr/alarms"
+	RetentionDays = 30
 )
 
 func getString(m map[string]any, key string) string {
@@ -61,7 +61,7 @@ func decodeAddress(raw any) string {
 	return net.IPv4(byte(addr), byte(addr>>8), byte(addr>>16), byte(addr>>24)).String()
 }
 
-func readEventsFile(path string) ([]AlarmEvent, error) {
+func ReadEventsFile(path string) ([]AlarmEvent, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err

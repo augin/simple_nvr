@@ -1,4 +1,4 @@
-package main
+package api
 
 import (
 	"encoding/json"
@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"simple_nvr/internal/auth"
 )
 
 func (a *API) HandleArchive(w http.ResponseWriter, r *http.Request) {
@@ -63,7 +65,7 @@ func (a *API) HandleArchiveDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, role, _ := GetUserFromContext(r)
+	_, role, _ := auth.GetUserFromContext(r)
 	if role != "admin" {
 		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 		return

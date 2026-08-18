@@ -1,9 +1,11 @@
-package main
+package api
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+
+	"simple_nvr/internal/auth"
 )
 
 func (a *API) HandleLogin(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +53,7 @@ func (a *API) HandleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) HandleMe(w http.ResponseWriter, r *http.Request) {
-	username, role, ok := GetUserFromContext(r)
+	username, role, ok := auth.GetUserFromContext(r)
 	if !ok {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{"authorized": false})
@@ -73,7 +75,7 @@ func (a *API) HandleAuthCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	username, role, ok := GetUserFromContext(r)
+	username, role, ok := auth.GetUserFromContext(r)
 	if !ok {
 		if cookie, err := r.Cookie("session_token"); err == nil {
 			username, role, err = a.userStore.ParseSessionCookie(cookie)
@@ -111,7 +113,7 @@ func (a *API) HandleAddUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if a.userStore.HasUsers() {
-		_, role, ok := GetUserFromContext(r)
+		_, role, ok := auth.GetUserFromContext(r)
 		if !ok || role != "admin" {
 			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 			return
@@ -162,7 +164,7 @@ func (a *API) HandleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	currentUser, _, _ := GetUserFromContext(r)
+	currentUser, _, _ := auth.GetUserFromContext(r)
 	if currentUser == username {
 		http.Error(w, `{"error":"cannot delete yourself"}`, http.StatusBadRequest)
 		return
@@ -193,7 +195,7 @@ func (a *API) HandleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	currentUser, currentRole, _ := GetUserFromContext(r)
+	currentUser, currentRole, _ := auth.GetUserFromContext(r)
 
 	if currentRole != "admin" {
 		if currentUser != req.Username {

@@ -1,4 +1,4 @@
-package main
+package api
 
 import (
 	"fmt"
@@ -6,30 +6,37 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"simple_nvr/internal/alarm"
+	"simple_nvr/internal/auth"
+	"simple_nvr/internal/config"
+	"simple_nvr/internal/logs"
+	"simple_nvr/internal/recorder"
+	"simple_nvr/internal/storage"
 )
 
 type API struct {
-	config         *NVRConfig
+	config         *config.NVRConfig
 	configPath     string
-	recorder       *Recorder
-	storage        *Storage
-	alarm          *AlarmServer
-	hikvisionAlarm *HikvisionAlarmServer
-	logBuffer      *LogBuffer
-	userStore      *UserStore
+	recorder       *recorder.Recorder
+	storage        *storage.Storage
+	alarm          *alarm.AlarmServer
+	hikvisionAlarm *alarm.HikvisionAlarmServer
+	logBuffer      *logs.LogBuffer
+	userStore      *auth.UserStore
 	toolsScan      scanState
 }
 
-func NewAPI(config *NVRConfig, configPath string, recorder *Recorder, storage *Storage, alarm *AlarmServer, hikvisionAlarm *HikvisionAlarmServer, logBuffer *LogBuffer, userStore *UserStore) *API {
+func NewAPI(cfg *config.NVRConfig, configPath string, rec *recorder.Recorder, stor *storage.Storage, alarmSrv *alarm.AlarmServer, hikvisionAlarm *alarm.HikvisionAlarmServer, logBuf *logs.LogBuffer, userSt *auth.UserStore) *API {
 	return &API{
-		config:         config,
+		config:         cfg,
 		configPath:     configPath,
-		recorder:       recorder,
-		storage:        storage,
-		alarm:          alarm,
+		recorder:       rec,
+		storage:        stor,
+		alarm:          alarmSrv,
 		hikvisionAlarm: hikvisionAlarm,
-		logBuffer:      logBuffer,
-		userStore:      userStore,
+		logBuffer:      logBuf,
+		userStore:      userSt,
 	}
 }
 
@@ -55,7 +62,7 @@ func (a *API) restartGo2RTC() error {
 }
 
 func requireAdminRole(r *http.Request) bool {
-	_, role, _ := GetUserFromContext(r)
+	_, role, _ := auth.GetUserFromContext(r)
 	return role == "admin"
 }
 

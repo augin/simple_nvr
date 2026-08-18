@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"fmt"
@@ -39,7 +39,7 @@ type Go2RTCConfig struct {
 	IPMap       map[string]string
 }
 
-func loadNVRConfig(path string) (*NVRConfig, error) {
+func LoadNVRConfig(path string) (*NVRConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil && path != "/etc/simple-nvr/nvr.yaml" {
 		data, err = os.ReadFile("/etc/simple-nvr/nvr.yaml")
@@ -80,13 +80,13 @@ func loadNVRConfig(path string) (*NVRConfig, error) {
 	if cfg.UsersFile == "" {
 		cfg.UsersFile = "/etc/simple-nvr/users.yaml"
 	}
-	if err := validateConfig(&cfg); err != nil {
+	if err := ValidateConfig(&cfg); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
 }
 
-func validateConfig(cfg *NVRConfig) error {
+func ValidateConfig(cfg *NVRConfig) error {
 	if cfg.BaseDir == "" {
 		return fmt.Errorf("base_dir is required")
 	}
@@ -99,7 +99,7 @@ func validateConfig(cfg *NVRConfig) error {
 	return nil
 }
 
-func loadGo2RTCConfig(path string) (*Go2RTCConfig, error) {
+func LoadGo2RTCConfig(path string) (*Go2RTCConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -131,11 +131,11 @@ func loadGo2RTCConfig(path string) (*Go2RTCConfig, error) {
 			break
 		}
 	}
-	cfg.IPMap = buildIPMap(cfg.Streams)
+	cfg.IPMap = BuildIPMap(cfg.Streams)
 	return cfg, nil
 }
 
-func buildIPMap(streams map[string]any) map[string]string {
+func BuildIPMap(streams map[string]any) map[string]string {
 	ipMap := make(map[string]string)
 	for name, val := range streams {
 		urlStr, ok := val.(string)
@@ -154,7 +154,7 @@ func buildIPMap(streams map[string]any) map[string]string {
 	return ipMap
 }
 
-func saveNVRConfig(path string, cfg *NVRConfig) error {
+func SaveNVRConfig(path string, cfg *NVRConfig) error {
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return err
@@ -162,7 +162,7 @@ func saveNVRConfig(path string, cfg *NVRConfig) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-func saveGo2RTCConfig(path string, streams map[string]any, order []string) error {
+func SaveGo2RTCConfig(path string, streams map[string]any, order []string) error {
 	doc := &yaml.Node{Kind: yaml.DocumentNode}
 	root := &yaml.Node{Kind: yaml.MappingNode}
 	streamsNode := &yaml.Node{Kind: yaml.MappingNode}

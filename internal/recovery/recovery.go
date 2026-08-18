@@ -1,4 +1,4 @@
-package main
+package recovery
 
 import (
 	"bytes"
@@ -41,7 +41,7 @@ func tryFFmpegMovRepair(badPath string) (bool, error) {
 	return true, nil
 }
 
-func recoverWithFFmpeg(badPath, camera, go2rtcURL string) error {
+func RecoverWithFFmpeg(badPath, camera, go2rtcURL string) error {
 	f, err := os.Open(badPath)
 	if err != nil {
 		return fmt.Errorf("open: %w", err)
@@ -224,4 +224,11 @@ func recoverWithFFmpeg(badPath, camera, go2rtcURL string) error {
 
 	log.Printf("Recovered %s using ffmpeg (codec: %s, size: %d)", badPath, format, fiFixed.Size())
 	return nil
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

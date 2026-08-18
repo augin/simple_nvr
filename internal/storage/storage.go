@@ -1,4 +1,4 @@
-package main
+package storage
 
 import (
 	"log"
@@ -7,14 +7,16 @@ import (
 	"sort"
 	"strconv"
 	"time"
+
+	"simple_nvr/internal/config"
 )
 
 type Storage struct {
-	config *NVRConfig
+	config *config.NVRConfig
 }
 
-func NewStorage(config *NVRConfig) *Storage {
-	return &Storage{config: config}
+func NewStorage(cfg *config.NVRConfig) *Storage {
+	return &Storage{config: cfg}
 }
 
 func (s *Storage) CleanCameraFolders() {
@@ -318,11 +320,11 @@ func (s *Storage) GetStorageInfo() map[string]any {
 	totalGB := float64(totalSize) / (1024 * 1024 * 1024)
 
 	return map[string]any{
-		"total_size_gb":        totalGB,
+		"total_size_gb":           totalGB,
 		"default_camera_limit_gb": s.config.DefaultCameraLimitGB,
-		"global_size_gb":         s.config.GlobalSizeGB,
-		"file_count":           fileCount,
-		"base_dir":             baseDir,
+		"global_size_gb":          s.config.GlobalSizeGB,
+		"file_count":              fileCount,
+		"base_dir":                baseDir,
 	}
 }
 

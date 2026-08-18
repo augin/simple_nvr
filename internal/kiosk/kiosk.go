@@ -1,4 +1,4 @@
-package main
+package kiosk
 
 import (
 	"log"
@@ -8,17 +8,19 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"simple_nvr/internal/config"
 )
 
 type KioskServer struct {
-	config   *NVRConfig
+	config   *config.NVRConfig
 	mainAddr string
 }
 
-func NewKioskServer(config *NVRConfig) *KioskServer {
+func NewKioskServer(cfg *config.NVRConfig) *KioskServer {
 	return &KioskServer{
-		config:   config,
-		mainAddr: "http://127.0.0.1:" + strconv.Itoa(config.HTTPPort),
+		config:   cfg,
+		mainAddr: "http://127.0.0.1:" + strconv.Itoa(cfg.HTTPPort),
 	}
 }
 

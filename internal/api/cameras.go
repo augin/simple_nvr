@@ -1,4 +1,4 @@
-package main
+package api
 
 import (
 	"encoding/json"
@@ -6,10 +6,12 @@ import (
 	"log"
 	"net/http"
 	"strings"
+
+	"simple_nvr/internal/config"
 )
 
 func (a *API) HandleCameras(w http.ResponseWriter, r *http.Request) {
-	go2cfg, err := loadGo2RTCConfig(a.config.Go2RTCConfigPath)
+	go2cfg, err := config.LoadGo2RTCConfig(a.config.Go2RTCConfigPath)
 	if err != nil {
 		log.Printf("Warning: could not load go2rtc config %s: %v", a.config.Go2RTCConfigPath, err)
 		w.Header().Set("Content-Type", "application/json")
@@ -40,7 +42,7 @@ func (a *API) HandleGo2RTCCameras(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleGo2RTCCamerasGet(w http.ResponseWriter, r *http.Request) {
-	go2cfg, err := loadGo2RTCConfig(a.config.Go2RTCConfigPath)
+	go2cfg, err := config.LoadGo2RTCConfig(a.config.Go2RTCConfigPath)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
 		return
@@ -169,7 +171,7 @@ func (a *API) handleGo2RTCCamerasAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go2cfg, err := loadGo2RTCConfig(a.config.Go2RTCConfigPath)
+	go2cfg, err := config.LoadGo2RTCConfig(a.config.Go2RTCConfigPath)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
 		return
@@ -178,7 +180,7 @@ func (a *API) handleGo2RTCCamerasAdd(w http.ResponseWriter, r *http.Request) {
 	go2cfg.Streams[req.Name] = urlStr
 	go2cfg.StreamOrder = append(go2cfg.StreamOrder, req.Name)
 
-	if err := saveGo2RTCConfig(a.config.Go2RTCConfigPath, go2cfg.Streams, go2cfg.StreamOrder); err != nil {
+	if err := config.SaveGo2RTCConfig(a.config.Go2RTCConfigPath, go2cfg.Streams, go2cfg.StreamOrder); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"save config: %s"}`, err.Error()), http.StatusInternalServerError)
 		return
 	}
@@ -188,7 +190,7 @@ func (a *API) handleGo2RTCCamerasAdd(w http.ResponseWriter, r *http.Request) {
 		limitGB = a.config.DefaultCameraLimitGB
 	}
 	a.config.CameraLimits[req.Name] = limitGB
-	if err := saveNVRConfig(a.configPath, a.config); err != nil {
+	if err := config.SaveNVRConfig(a.configPath, a.config); err != nil {
 		log.Printf("warning: save nvr config: %v", err)
 	}
 
@@ -215,7 +217,7 @@ func (a *API) handleGo2RTCCamerasDelete(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	go2cfg, err := loadGo2RTCConfig(a.config.Go2RTCConfigPath)
+	go2cfg, err := config.LoadGo2RTCConfig(a.config.Go2RTCConfigPath)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
 		return
@@ -235,7 +237,7 @@ func (a *API) handleGo2RTCCamerasDelete(w http.ResponseWriter, r *http.Request) 
 	}
 	go2cfg.StreamOrder = newOrder
 
-	if err := saveGo2RTCConfig(a.config.Go2RTCConfigPath, go2cfg.Streams, go2cfg.StreamOrder); err != nil {
+	if err := config.SaveGo2RTCConfig(a.config.Go2RTCConfigPath, go2cfg.Streams, go2cfg.StreamOrder); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"save config: %s"}`, err.Error()), http.StatusInternalServerError)
 		return
 	}
@@ -270,7 +272,7 @@ func (a *API) HandleGo2RTCReorder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go2cfg, err := loadGo2RTCConfig(a.config.Go2RTCConfigPath)
+	go2cfg, err := config.LoadGo2RTCConfig(a.config.Go2RTCConfigPath)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
 		return
@@ -297,7 +299,7 @@ func (a *API) HandleGo2RTCReorder(w http.ResponseWriter, r *http.Request) {
 	newOrder = append(newOrder[:insertAt], append([]string{name}, newOrder[insertAt:]...)...)
 	go2cfg.StreamOrder = newOrder
 
-	if err := saveGo2RTCConfig(a.config.Go2RTCConfigPath, go2cfg.Streams, go2cfg.StreamOrder); err != nil {
+	if err := config.SaveGo2RTCConfig(a.config.Go2RTCConfigPath, go2cfg.Streams, go2cfg.StreamOrder); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"save config: %s"}`, err.Error()), http.StatusInternalServerError)
 		return
 	}

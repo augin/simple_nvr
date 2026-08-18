@@ -1,4 +1,4 @@
-package main
+package alarm
 
 import (
 	"encoding/binary"
@@ -16,6 +16,8 @@ import (
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+
+	"simple_nvr/internal/config"
 )
 
 type AlarmEvent struct {
@@ -31,7 +33,7 @@ type AlarmEvent struct {
 }
 
 type AlarmServer struct {
-	config   *NVRConfig
+	config   *config.NVRConfig
 	ipMap    map[string]string
 	mu       sync.Mutex
 	log      []AlarmEvent
@@ -41,11 +43,11 @@ type AlarmServer struct {
 	stopCh   chan struct{}
 }
 
-func NewAlarmServer(config *NVRConfig, ipMap map[string]string) *AlarmServer {
+func NewAlarmServer(cfg *config.NVRConfig, ipMap map[string]string) *AlarmServer {
 	return &AlarmServer{
-		config: config,
+		config: cfg,
 		ipMap:  ipMap,
-		log:    make([]AlarmEvent, 0, maxAlarmLog),
+		log:    make([]AlarmEvent, 0, MaxAlarmLog),
 		stopCh: make(chan struct{}),
 	}
 }
@@ -58,7 +60,7 @@ func (s *AlarmServer) Start() error {
 		return fmt.Errorf("alarm server already running")
 	}
 
-	if err := os.MkdirAll(alarmDir, 0755); err != nil {
+	if err := os.MkdirAll(AlarmDir, 0755); err != nil {
 		return fmt.Errorf("failed to create alarm dir: %v", err)
 	}
 
@@ -172,8 +174,8 @@ func (s *AlarmServer) handleClient(conn net.Conn) {
 			event.Camera = s.ipMap[event.Address]
 		}
 
-		s.addLog(event)
-		s.saveEvent(event)
+		s.AddLog(event)
+		s.SaveEvent(event)
 
 		cameraLog := event.Camera
 		if cameraLog == "" {
@@ -182,7 +184,7 @@ func (s *AlarmServer) handleClient(conn net.Conn) {
 		log.Printf("Alarm event: camera=%s serial=%s type=%s event=%s status=%s",
 			cameraLog, event.SerialID, event.Type, event.Event, event.Status)
 
-		s.publishMQTT(event)
+		s.PublishMQTT(event)
 
 		if s.config.AlarmCommand != "" && event.Status == "Start" {
 			go s.runCommand(event)
@@ -190,19 +192,19 @@ func (s *AlarmServer) handleClient(conn net.Conn) {
 	}
 }
 
-func (s *AlarmServer) addLog(event AlarmEvent) {
+func (s *AlarmServer) AddLog(event AlarmEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.log = append(s.log, event)
-	if len(s.log) > maxAlarmLog {
-		s.log = s.log[len(s.log)-maxAlarmLog:]
+	if len(s.log) > MaxAlarmLog {
+		s.log = s.log[len(s.log)-MaxAlarmLog:]
 	}
 }
 
-func (s *AlarmServer) saveEvent(event AlarmEvent) {
+func (s *AlarmServer) SaveEvent(event AlarmEvent) {
 	fileName := event.Time.Format("2006-01-02") + ".jsonl"
-	filePath := filepath.Join(alarmDir, fileName)
+	filePath := filepath.Join(AlarmDir, fileName)
 
 	data, err := json.Marshal(event)
 	if err != nil {
@@ -229,9 +231,9 @@ func (s *AlarmServer) loadRecentEvents(days int) {
 	for i := days - 1; i >= 0; i-- {
 		date := now.AddDate(0, 0, -i)
 		fileName := date.Format("2006-01-02") + ".jsonl"
-		filePath := filepath.Join(alarmDir, fileName)
+		filePath := filepath.Join(AlarmDir, fileName)
 
-		events, err := readEventsFile(filePath)
+		events, err := ReadEventsFile(filePath)
 		if err != nil {
 			continue
 		}
@@ -241,16 +243,16 @@ func (s *AlarmServer) loadRecentEvents(days int) {
 		}
 	}
 
-	if len(s.log) > maxAlarmLog {
-		s.log = s.log[len(s.log)-maxAlarmLog:]
+	if len(s.log) > MaxAlarmLog {
+		s.log = s.log[len(s.log)-MaxAlarmLog:]
 	}
 }
 
 func (s *AlarmServer) cleanupOldEvents() {
-	threshold := time.Now().AddDate(0, 0, -retentionDays)
+	threshold := time.Now().AddDate(0, 0, -RetentionDays)
 	thresholdStr := threshold.Format("2006-01-02")
 
-	entries, err := os.ReadDir(alarmDir)
+	entries, err := os.ReadDir(AlarmDir)
 	if err != nil {
 		return
 	}
@@ -261,7 +263,7 @@ func (s *AlarmServer) cleanupOldEvents() {
 		}
 		dateStr := strings.TrimSuffix(entry.Name(), ".jsonl")
 		if dateStr < thresholdStr {
-			if err := os.Remove(filepath.Join(alarmDir, entry.Name())); err != nil {
+			if err := os.Remove(filepath.Join(AlarmDir, entry.Name())); err != nil {
 				log.Printf("Alarm cleanup error removing %s: %v", entry.Name(), err)
 			} else {
 				log.Printf("Alarm: cleaned up old log %s", entry.Name())
@@ -360,7 +362,7 @@ func (s *AlarmServer) connectMQTT() {
 	}
 }
 
-func (s *AlarmServer) publishMQTT(event AlarmEvent) {
+func (s *AlarmServer) PublishMQTT(event AlarmEvent) {
 	if s.mqtt == nil || !s.mqtt.IsConnected() {
 		return
 	}
