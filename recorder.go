@@ -60,10 +60,11 @@ func (r *Recorder) startRecordingAt(scheduledTime time.Time, durations ...int) {
 		return
 	}
 
+	now := time.Now()
 	year := scheduledTime.Format("2006")
 	month := scheduledTime.Format("01")
 	day := scheduledTime.Format("02")
-	currentTime := scheduledTime.Format("15-04")
+	currentTime := now.Format("15-04")
 
 	r.mu.Lock()
 	r.active = true
