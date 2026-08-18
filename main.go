@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-var version = "2.11.4"
+var version = "2.11.5"
 
 func findStaticDir() string {
 	exe, err := os.Executable()
@@ -245,8 +245,10 @@ func startScheduler(recorder *Recorder) {
 		log.Printf("Next recording cycle at %s (in %v)", nextTick.Format("15:04:05"), nextTick.Sub(now).Round(time.Second))
 		time.Sleep(nextTick.Sub(now))
 
-		storage := NewStorage(recorder.config)
-		storage.CleanCameraFolders()
-		recorder.StartRecording(607)
+		go func() {
+			storage := NewStorage(recorder.config)
+			storage.CleanCameraFolders()
+		}()
+		recorder.StartRecordingScheduled(nextTick, 607)
 	}
 }

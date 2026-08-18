@@ -39,12 +39,20 @@ func NewRecorder(config *NVRConfig) *Recorder {
 }
 
 func (r *Recorder) StartRecording(durations ...int) {
+	r.startRecordingAt(time.Now(), durations...)
+}
+
+func (r *Recorder) StartRecordingScheduled(scheduledTime time.Time, durations ...int) {
+	r.startRecordingAt(scheduledTime, durations...)
+}
+
+func (r *Recorder) startRecordingAt(scheduledTime time.Time, durations ...int) {
 	dur := r.duration
 	if len(durations) > 0 && durations[0] > 0 {
 		dur = durations[0]
 	}
 
-	log.Printf("Starting recording cycle (%ds)", dur)
+	log.Printf("Starting recording cycle (%ds) scheduled at %s", dur, scheduledTime.Format("15:04:05"))
 
 	go2cfg, err := loadGo2RTCConfig(r.config.Go2RTCConfigPath)
 	if err != nil {
@@ -52,11 +60,10 @@ func (r *Recorder) StartRecording(durations ...int) {
 		return
 	}
 
-	now := time.Now()
-	year := now.Format("2006")
-	month := now.Format("01")
-	day := now.Format("02")
-	currentTime := now.Format("15-04")
+	year := scheduledTime.Format("2006")
+	month := scheduledTime.Format("01")
+	day := scheduledTime.Format("02")
+	currentTime := scheduledTime.Format("15-04")
 
 	r.mu.Lock()
 	r.active = true
