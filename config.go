@@ -80,7 +80,23 @@ func loadNVRConfig(path string) (*NVRConfig, error) {
 	if cfg.UsersFile == "" {
 		cfg.UsersFile = "/etc/simple-nvr/users.yaml"
 	}
+	if err := validateConfig(&cfg); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
+}
+
+func validateConfig(cfg *NVRConfig) error {
+	if cfg.BaseDir == "" {
+		return fmt.Errorf("base_dir is required")
+	}
+	if cfg.StreamServer == "" {
+		return fmt.Errorf("stream_server is required")
+	}
+	if cfg.Go2RTCConfigPath == "" {
+		return fmt.Errorf("go2rtc_config_path is required")
+	}
+	return nil
 }
 
 func loadGo2RTCConfig(path string) (*Go2RTCConfig, error) {

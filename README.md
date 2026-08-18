@@ -61,6 +61,33 @@ sudo apt install simple-nvr
 go build -o nvr .
 ```
 
+### Структура проекта
+
+```
+main.go            — точка входа, HTTP-маршруты, планировщик
+config.go          — загрузка/сохранение конфигурации (NVR, go2rtc)
+auth.go            — авторизация, сессии, роли
+recorder.go        — запись RTSP-потоков через ffmpeg
+storage.go         — управление диском, лимиты, очистка
+alarm.go           — TCP-сервер тревог Dahua/XM, MQTT
+alarm_hikvision.go — HTTP-сервер тревог Hikvision
+alarm_common.go    — общие функции и константы тревог
+recovery.go        — восстановление повреждённых MP4
+nal_parser.go      — парсинг NAL-单元 H.264/HEVC, SPS/PPS/VPS
+logs.go            — кольцевой буфер системных логов
+kiosk.go           — режим киоска (reverse proxy)
+api.go             — ядро API, структура API
+api_cameras.go     — CRUD камер, go2rtc reorder
+api_files.go       — просмотр записей, скачивание, обрезка
+api_archive.go     — архив обрезанных клипов
+api_config.go      — настройки, статус, управление записью
+api_alarm.go       — API тревог (Dahua + Hikvision)
+api_go2rtc.go      — установка/обновление/restart go2rtc
+api_tools.go       — сканер записей, восстановление
+api_users.go       — управление пользователями
+api_logs.go        — API системных логов
+```
+
 ### Конфигурация
 
 Создайте файл `/etc/simple-nvr/nvr.yaml`:
