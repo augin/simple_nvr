@@ -815,10 +815,12 @@ async function fetchStatus() {
         const now = Date.now();
         procEl.innerHTML = procs.map(p => {
           const remaining = calcRemaining(p.startTime, p.duration, now);
+          const file = p.output ? p.output.split('/').pop() : '';
           return `<div class="process-item">
             <span class="led led-red"></span>
             <span class="process-name">${p.name}</span>
             <span class="process-meta">${p.startTime}</span>
+            <span class="process-file">${file}</span>
             <span class="process-remaining">${remaining}</span>
           </div>`;
         }).join('');
