@@ -82,9 +82,12 @@ func levelIncluded(entry, filter string) bool {
 	if filter == "" || filter == "all" {
 		return true
 	}
+	f, ok2 := levelOrder[strings.ToUpper(filter)]
+	if !ok2 {
+		return true
+	}
 	e, ok1 := levelOrder[entry]
-	f, ok2 := levelOrder[filter]
-	if !ok1 || !ok2 {
+	if !ok1 {
 		return true
 	}
 	return e >= f
