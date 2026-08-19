@@ -14,8 +14,9 @@ func (a *API) HandleLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	since := r.URL.Query().Get("since")
+	level := r.URL.Query().Get("level")
 
-	logs := a.logBuffer.GetLogs(limit, since)
+	logs := a.logBuffer.GetLogs(limit, since, level)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(logs)
 }

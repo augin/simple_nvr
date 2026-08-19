@@ -1222,6 +1222,9 @@ async function fetchVersion() {
 async function loadLogs() {
   try {
     let url = 'api/logs?limit=500';
+    const levelEl = document.getElementById('log-level-filter');
+    const level = levelEl ? levelEl.value : 'info';
+    url += '&level=' + encodeURIComponent(level);
     if (logLastSince) {
       url += '&since=' + encodeURIComponent(logLastSince);
     }
@@ -1310,6 +1313,15 @@ async function clearLogs() {
   } catch (err) {
     console.error('Error clearing logs:', err);
   }
+}
+
+function onLogLevelChange() {
+  logLastSince = null;
+  const container = document.getElementById('log-container');
+  if (container) {
+    container.innerHTML = '';
+  }
+  loadLogs();
 }
 
 async function loadUsers() {

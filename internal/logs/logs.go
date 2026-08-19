@@ -70,7 +70,27 @@ func (b *LogBuffer) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-func (b *LogBuffer) GetLogs(limit int, since string) []LogEntry {
+var levelOrder = map[string]int{
+	"DEBUG": 0,
+	"INFO":  1,
+	"WARN":  2,
+	"ERROR": 3,
+	"FATAL": 4,
+}
+
+func levelIncluded(entry, filter string) bool {
+	if filter == "" || filter == "all" {
+		return true
+	}
+	e, ok1 := levelOrder[entry]
+	f, ok2 := levelOrder[filter]
+	if !ok1 || !ok2 {
+		return true
+	}
+	return e >= f
+}
+
+func (b *LogBuffer) GetLogs(limit int, since string, level string) []LogEntry {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -87,6 +107,10 @@ func (b *LogBuffer) GetLogs(limit int, since string) []LogEntry {
 		entry := b.entries[idx]
 
 		if !sinceTime.IsZero() && entry.Time.Before(sinceTime) {
+			continue
+		}
+
+		if !levelIncluded(entry.Level, level) {
 			continue
 		}
 

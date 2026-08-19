@@ -239,6 +239,14 @@
           <h3>Системные логи</h3>
           <div class="log-controls">
             <span class="log-count" id="log-count">0 записей</span>
+            <select id="log-level-filter" class="log-level-select" onchange="onLogLevelChange()">
+              <option value="info">INFO и выше</option>
+              <option value="all">Все</option>
+              <option value="debug">DEBUG</option>
+              <option value="warn">WARN</option>
+              <option value="error">ERROR</option>
+              <option value="fatal">FATAL</option>
+            </select>
             <label class="log-autoscroll-label">
               <input type="checkbox" id="log-autoscroll" checked>
               <span>Автопрокрутка</span>
