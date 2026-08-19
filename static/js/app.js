@@ -777,6 +777,17 @@ async function fetchStatus() {
       mIndicator.style.display = data.recording ? 'flex' : 'none';
     }
 
+    const titleEl = document.getElementById('monitoring-title');
+    if (titleEl) {
+      const procs = data.processes || [];
+      const total = data.totalStreams || 0;
+      if (data.recording && total > 0) {
+        titleEl.textContent = `Запись: ${procs.length}/${total}`;
+      } else {
+        titleEl.textContent = 'Процессы записи';
+      }
+    }
+
     if (data.storage) {
       const storageEl = document.getElementById('storage-info');
       if (storageEl) {
@@ -801,23 +812,34 @@ async function fetchStatus() {
       if (procs.length === 0) {
         procEl.innerHTML = '<div class="empty-msg">Нет активных процессов записи</div>';
       } else {
-        procEl.innerHTML = procs.map(p => `
-          <div class="process-item">
-            <div>
-              <div class="process-header">
-                <span class="process-name">${p.name}</span>
-                <span class="process-meta">${p.startTime}</span>
-                <span class="led led-red"></span>
-              </div>
-              <div class="process-output">${p.output}</div>
-            </div>
-          </div>
-        `).join('');
+        const now = Date.now();
+        procEl.innerHTML = procs.map(p => {
+          const remaining = calcRemaining(p.startTime, p.duration, now);
+          return `<div class="process-item">
+            <span class="led led-red"></span>
+            <span class="process-name">${p.name}</span>
+            <span class="process-meta">${p.startTime}</span>
+            <span class="process-remaining">${remaining}</span>
+          </div>`;
+        }).join('');
       }
     }
   } catch (err) {
     console.error('Error fetching status:', err);
   }
+}
+
+function calcRemaining(startTime, duration, now) {
+  if (!startTime || !duration) return '--:--';
+  const parts = startTime.split(':');
+  if (parts.length < 3) return '--:--';
+  const d = new Date(now);
+  d.setHours(parseInt(parts[0]), parseInt(parts[1]), parseInt(parts[2]), 0);
+  const elapsed = Math.floor((now - d.getTime()) / 1000);
+  const rem = Math.max(0, duration - elapsed);
+  const m = Math.floor(rem / 60);
+  const s = rem % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 async function loadSettings() {

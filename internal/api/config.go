@@ -77,9 +77,11 @@ func (a *API) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	status := a.recorder.GetStatus()
 	status["storage"] = a.storage.GetStorageInfo()
 
-	if procs, ok := status["processes"].([]*recorder.StreamInfo); ok && len(procs) > 1 {
-		go2cfg, err := config.LoadGo2RTCConfig(a.config.Go2RTCConfigPath)
-		if err == nil {
+	go2cfg, err := config.LoadGo2RTCConfig(a.config.Go2RTCConfigPath)
+	if err == nil {
+		status["totalStreams"] = len(go2cfg.StreamOrder)
+
+		if procs, ok := status["processes"].([]*recorder.StreamInfo); ok && len(procs) > 1 {
 			orderMap := make(map[string]int, len(go2cfg.StreamOrder))
 			for i, name := range go2cfg.StreamOrder {
 				orderMap[name] = i

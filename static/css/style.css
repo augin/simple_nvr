@@ -658,38 +658,35 @@ body {
 }
 
 .process-item {
-  display: grid;
-  grid-template-columns: 1fr auto;
+  display: flex;
   align-items: center;
-  padding: 10px 12px;
+  gap: 10px;
+  padding: 8px 12px;
   background-color: var(--bg-tertiary);
   border-radius: 4px;
   border-left: 3px solid var(--success);
   font-size: 13px;
 }
 
-.process-item .process-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .process-item .process-name {
   font-weight: 600;
   color: var(--text-primary);
+  white-space: nowrap;
 }
 
 .process-item .process-meta {
   color: var(--text-secondary);
   font-size: 12px;
+  font-family: monospace;
+  white-space: nowrap;
 }
 
-.process-item .process-output {
+.process-item .process-remaining {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-family: monospace;
-  margin-top: 4px;
-  word-break: break-all;
+  white-space: nowrap;
+  margin-left: auto;
 }
 
 .alarm-status-badge {

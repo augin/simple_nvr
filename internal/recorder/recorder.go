@@ -19,6 +19,7 @@ type StreamInfo struct {
 	Output    string `json:"output"`
 	StartTime string `json:"startTime"`
 	PID       int    `json:"pid"`
+	Duration  int    `json:"duration"`
 }
 
 type Recorder struct {
@@ -120,6 +121,7 @@ func (r *Recorder) recordStream(streamName, year, month, day, currentTime string
 		Output:    outputFile,
 		StartTime: time.Now().Format("15:04:05"),
 		PID:       0,
+		Duration:  duration,
 	}
 	r.mu.Unlock()
 
