@@ -98,6 +98,25 @@ func (r *Recorder) recordStream(streamName, year, month, day, currentTime string
 
 	outputFile := filepath.Join(directory, fmt.Sprintf("%s.mp4", currentTime))
 
+	var lastErr error
+	for attempt := 0; attempt <= 1; attempt++ {
+		if attempt > 0 {
+			log.Printf("Retrying stream %s in 5s (attempt %d)", streamName, attempt+1)
+			time.Sleep(5 * time.Second)
+		}
+
+		lastErr = r.runFFmpeg(streamName, outputFile, duration, myEpoch)
+		if lastErr == nil {
+			return
+		}
+
+		log.Printf("Error recording stream %s: %v", streamName, lastErr)
+	}
+
+	log.Printf("Stream %s failed after retry: %v", streamName, lastErr)
+}
+
+func (r *Recorder) runFFmpeg(streamName, outputFile string, duration int, myEpoch int64) error {
 	cmd := exec.Command("ffmpeg",
 		"-hide_banner", "-loglevel", "warning", "-threads", "2",
 		"-avoid_negative_ts", "make_zero",
@@ -135,7 +154,7 @@ func (r *Recorder) recordStream(streamName, year, month, day, currentTime string
 			delete(r.streamInfo, streamName)
 		}
 		r.mu.Unlock()
-		return
+		return err
 	}
 
 	r.mu.Lock()
@@ -149,13 +168,13 @@ func (r *Recorder) recordStream(streamName, year, month, day, currentTime string
 		done <- cmd.Wait()
 	}()
 
+	var err error
 	select {
-	case err := <-done:
+	case err = <-done:
 		if err != nil {
-			log.Printf("Error recording stream %s: %v", streamName, err)
-		} else {
-			log.Printf("Stream %s recording finished successfully", streamName)
+			return err
 		}
+		log.Printf("Stream %s recording finished successfully", streamName)
 	case <-time.After(time.Duration(duration+30) * time.Second):
 		log.Printf("Stream %s: duration+30s reached, sending SIGTERM", streamName)
 		GracefulStop(cmd, 15*time.Second)
@@ -168,6 +187,8 @@ func (r *Recorder) recordStream(streamName, year, month, day, currentTime string
 		delete(r.streamInfo, streamName)
 	}
 	r.mu.Unlock()
+
+	return err
 }
 
 func GracefulStop(cmd *exec.Cmd, grace time.Duration) {
