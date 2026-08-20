@@ -180,7 +180,7 @@ func (r *Recorder) runFFmpeg(streamName, outputFile string, duration int, myEpoc
 		log.Printf("Stream %s recording finished successfully", streamName)
 	case <-time.After(time.Duration(duration+30) * time.Second):
 		log.Printf("Stream %s: duration+30s reached, sending SIGTERM", streamName)
-		GracefulStop(cmd, 15*time.Second)
+		GracefulStop(cmd, 30*time.Second)
 		log.Printf("Stream %s recording completed", streamName)
 	}
 
