@@ -15,12 +15,14 @@ import (
 type KioskServer struct {
 	config   *config.NVRConfig
 	mainAddr string
+	version  string
 }
 
-func NewKioskServer(cfg *config.NVRConfig) *KioskServer {
+func NewKioskServer(cfg *config.NVRConfig, ver string) *KioskServer {
 	return &KioskServer{
 		config:   cfg,
 		mainAddr: "http://127.0.0.1:" + strconv.Itoa(cfg.HTTPPort),
+		version:  ver,
 	}
 }
 
@@ -58,6 +60,7 @@ func (ks *KioskServer) Start() {
 			injected := strings.Replace(raw,
 				"<head>",
 				"<head>\n<script>window.__kioskMode=true;window.__kioskRole='user';</script>", 1)
+			injected = strings.ReplaceAll(injected, "{{VERSION}}", ks.version)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Write([]byte(injected))
 			return

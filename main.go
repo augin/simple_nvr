@@ -23,7 +23,7 @@ import (
 	"simple_nvr/internal/storage"
 )
 
-var version = "2.12.8"
+var version = "2.12.9"
 
 func findStaticDir() string {
 	exe, err := os.Executable()
@@ -224,7 +224,7 @@ func main() {
 	log.Printf("Users file: %s", cfg.UsersFile)
 
 	if cfg.KioskEnabled {
-		k := kiosk.NewKioskServer(cfg)
+		k := kiosk.NewKioskServer(cfg, version)
 		k.Start()
 		log.Printf("Kiosk mode enabled on port %d", cfg.KioskPort)
 	}
