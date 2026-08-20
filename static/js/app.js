@@ -78,7 +78,7 @@ function applyRoleVisibility() {
 
   document.querySelectorAll('.nav-tab[data-tab]').forEach(btn => {
     const tab = btn.dataset.tab;
-    if (tab === 'monitoring' || tab === 'alarm' || tab === 'logs' || tab === 'settings') {
+    if (tab === 'monitoring' || tab === 'alarm' || tab === 'logs' || tab === 'settings' || tab === 'tools') {
       btn.style.display = isAdmin ? '' : 'none';
     }
   });
