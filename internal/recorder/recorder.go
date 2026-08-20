@@ -75,8 +75,11 @@ func (r *Recorder) startRecordingAt(scheduledTime time.Time, durations ...int) {
 	myEpoch := r.epoch
 	r.mu.Unlock()
 
+	delay := 0
 	for streamName := range go2cfg.Streams {
+		time.Sleep(time.Duration(delay) * time.Millisecond)
 		go r.recordStream(streamName, year, month, day, currentTime, dur, myEpoch)
+		delay += 250
 	}
 
 	go func() {
