@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -120,7 +121,10 @@ func (r *Recorder) recordStream(streamName, year, month, day, currentTime string
 }
 
 func (r *Recorder) runFFmpeg(streamName, outputFile string, duration int, myEpoch int64) error {
-	cmd := exec.Command("ffmpeg",
+	timeoutSec := duration + 60
+	cmd := exec.Command("timeout", strconv.Itoa(timeoutSec),
+		"ionice", "-c3",
+		"ffmpeg",
 		"-hide_banner", "-loglevel", "warning", "-threads", "2",
 		"-avoid_negative_ts", "make_zero",
 		"-fflags", "+nobuffer+genpts+discardcorrupt",
@@ -152,10 +156,8 @@ func (r *Recorder) runFFmpeg(streamName, outputFile string, duration int, myEpoc
 	if err := cmd.Start(); err != nil {
 		log.Printf("Error starting ffmpeg for %s: %v", streamName, err)
 		r.mu.Lock()
-		if r.epoch == myEpoch {
-			delete(r.processes, streamName)
-			delete(r.streamInfo, streamName)
-		}
+		delete(r.processes, streamName)
+		delete(r.streamInfo, streamName)
 		r.mu.Unlock()
 		return err
 	}
