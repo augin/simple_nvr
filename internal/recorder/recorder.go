@@ -387,10 +387,9 @@ func (r *Recorder) healthCheck() {
 				failCnt := r.failCount[streamName]
 				r.mu.Unlock()
 				if !exists && epoch == currentEpoch {
-					if failCnt >= 3 {
-						log.Printf("Health check: stream %s not in processes, failed %d times, skipping", streamName, failCnt)
-						continue
-					}
+				if failCnt >= 3 {
+					continue
+				}
 					log.Printf("Health check: stream %s not in processes (fail %d/3), restarting", streamName, failCnt+1)
 					r.mu.Lock()
 					r.failCount[streamName] = failCnt + 1
@@ -429,7 +428,6 @@ func (r *Recorder) checkStream(info *StreamInfo, currentEpoch int64) {
 
 	if !healthy {
 		if failCnt >= 3 {
-			log.Printf("Health check: stream %s failed %d times, skipping restart until next cycle", info.Name, failCnt)
 			return
 		}
 

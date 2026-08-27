@@ -23,7 +23,7 @@ import (
 	"simple_nvr/internal/storage"
 )
 
-var version = "2.13.7"
+var version = "2.13.8"
 
 func findStaticDir() string {
 	exe, err := os.Executable()
