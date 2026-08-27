@@ -33,6 +33,7 @@ type Recorder struct {
 	duration   int
 	epoch      int64
 	failCount  map[string]int
+	stopHealth chan struct{}
 }
 
 func NewRecorder(cfg *config.NVRConfig) *Recorder {
@@ -42,8 +43,8 @@ func NewRecorder(cfg *config.NVRConfig) *Recorder {
 		streamInfo: make(map[string]*StreamInfo),
 		duration:   607,
 		failCount:  make(map[string]int),
+		stopHealth: make(chan struct{}),
 	}
-	go r.healthCheck()
 	return r
 }
 
@@ -80,7 +81,22 @@ func (r *Recorder) startRecordingAt(scheduledTime time.Time, durations ...int) {
 	r.epoch++
 	myEpoch := r.epoch
 	r.failCount = make(map[string]int)
+	oldCmds := make([]*exec.Cmd, 0, len(r.processes))
+	for _, cmd := range r.processes {
+		oldCmds = append(oldCmds, cmd)
+	}
+	r.processes = make(map[string]*exec.Cmd)
+	r.streamInfo = make(map[string]*StreamInfo)
+	close(r.stopHealth)
+	r.stopHealth = make(chan struct{})
 	r.mu.Unlock()
+
+	for _, cmd := range oldCmds {
+		if cmd != nil && cmd.Process != nil {
+			log.Printf("Stopping old recording (PID %d) for new cycle", cmd.Process.Pid)
+			GracefulStop(cmd, 5*time.Second)
+		}
+	}
 
 	delay := 0
 	for streamName := range go2cfg.Streams {
@@ -94,6 +110,18 @@ func (r *Recorder) startRecordingAt(scheduledTime time.Time, durations ...int) {
 		r.mu.Lock()
 		if r.epoch == myEpoch {
 			r.active = false
+		}
+		r.mu.Unlock()
+	}()
+
+	go func() {
+		time.Sleep(10 * time.Second)
+		r.mu.Lock()
+		if r.epoch == myEpoch {
+			stopCh := r.stopHealth
+			r.mu.Unlock()
+			r.healthCheckLoop(stopCh)
+			return
 		}
 		r.mu.Unlock()
 	}()
@@ -185,11 +213,12 @@ func (r *Recorder) runFFmpeg(streamName, outputFile string, duration int, myEpoc
 	case <-time.After(time.Duration(duration+30) * time.Second):
 		log.Printf("Stream %s: duration+30s reached, sending SIGTERM", streamName)
 		GracefulStop(cmd, 30*time.Second)
-		log.Printf("Stream %s recording completed", streamName)
+		log.Printf("Stream %s recording completed after timeout", streamName)
+		return fmt.Errorf("recording timeout after %ds", duration+30)
 	}
 
 	r.mu.Lock()
-	if r.epoch == myEpoch {
+	if _, ok := r.processes[streamName]; ok {
 		delete(r.processes, streamName)
 		delete(r.streamInfo, streamName)
 	}
@@ -265,7 +294,22 @@ func (r *Recorder) StartRecordingStream(name string) {
 	r.epoch++
 	myEpoch := r.epoch
 	r.failCount = make(map[string]int)
+	oldCmds := make([]*exec.Cmd, 0, len(r.processes))
+	for _, cmd := range r.processes {
+		oldCmds = append(oldCmds, cmd)
+	}
+	r.processes = make(map[string]*exec.Cmd)
+	r.streamInfo = make(map[string]*StreamInfo)
+	close(r.stopHealth)
+	r.stopHealth = make(chan struct{})
 	r.mu.Unlock()
+
+	for _, cmd := range oldCmds {
+		if cmd != nil && cmd.Process != nil {
+			log.Printf("Stopping old recording (PID %d) for new cycle", cmd.Process.Pid)
+			GracefulStop(cmd, 5*time.Second)
+		}
+	}
 
 	go r.recordStream(name, year, month, day, currentTime, dur, myEpoch)
 
@@ -274,6 +318,18 @@ func (r *Recorder) StartRecordingStream(name string) {
 		r.mu.Lock()
 		if r.epoch == myEpoch {
 			r.active = false
+		}
+		r.mu.Unlock()
+	}()
+
+	go func() {
+		time.Sleep(10 * time.Second)
+		r.mu.Lock()
+		if r.epoch == myEpoch {
+			stopCh := r.stopHealth
+			r.mu.Unlock()
+			r.healthCheckLoop(stopCh)
+			return
 		}
 		r.mu.Unlock()
 	}()
@@ -357,15 +413,17 @@ func (r *Recorder) Config() *config.NVRConfig {
 	return r.config
 }
 
-func (r *Recorder) StartHealthCheck() {
-	go r.healthCheck()
-}
-
-func (r *Recorder) healthCheck() {
+func (r *Recorder) healthCheckLoop(stopCh chan struct{}) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
+	for {
+		select {
+		case <-stopCh:
+			return
+		case <-ticker.C:
+		}
+
 		r.mu.Lock()
 		if !r.active {
 			r.mu.Unlock()
