@@ -821,13 +821,11 @@ async function fetchStatus() {
         procEl.innerHTML = procs.map(p => {
           const remaining = calcRemaining(p.startTime, p.duration, now);
           const ledClass = p.healthy === false ? 'led led-yellow' : 'led led-red';
-          const sizeStr = p.file_size > 0 ? formatSize(p.file_size) : '';
           return `<div class="process-item">
             <span class="${ledClass}"></span>
             <span class="process-name">${p.name}</span>
             <span class="process-meta">${p.startTime}</span>
             <span class="process-file">${p.output || ''}</span>
-            <span class="process-size">${sizeStr}</span>
             <span class="process-remaining">${remaining}</span>
           </div>`;
         }).join('');

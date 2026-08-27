@@ -22,7 +22,6 @@ type StreamInfo struct {
 	PID       int    `json:"pid"`
 	Duration  int    `json:"duration"`
 	Healthy   bool   `json:"healthy"`
-	FileSize  int64  `json:"file_size"`
 }
 
 type Recorder struct {
@@ -398,7 +397,6 @@ func (r *Recorder) checkStream(info *StreamInfo, currentEpoch int64) {
 	}
 
 	healthy := true
-	var fileSize int64
 
 	if cmd.Process != nil {
 		if err := syscall.Kill(cmd.Process.Pid, 0); err != nil {
@@ -406,19 +404,9 @@ func (r *Recorder) checkStream(info *StreamInfo, currentEpoch int64) {
 		}
 	}
 
-	if healthy && info.Output != "" {
-		fi, err := os.Stat(info.Output)
-		if err != nil || fi.Size() == 0 {
-			healthy = false
-		} else {
-			fileSize = fi.Size()
-		}
-	}
-
 	r.mu.Lock()
 	if s, ok := r.streamInfo[info.Name]; ok {
 		s.Healthy = healthy
-		s.FileSize = fileSize
 	}
 	r.mu.Unlock()
 
