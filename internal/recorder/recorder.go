@@ -22,6 +22,7 @@ type StreamInfo struct {
 	PID       int    `json:"pid"`
 	Duration  int    `json:"duration"`
 	Healthy   bool   `json:"healthy"`
+	Epoch     int64  `json:"-"`
 }
 
 type Recorder struct {
@@ -81,22 +82,9 @@ func (r *Recorder) startRecordingAt(scheduledTime time.Time, durations ...int) {
 	r.epoch++
 	myEpoch := r.epoch
 	r.failCount = make(map[string]int)
-	oldCmds := make([]*exec.Cmd, 0, len(r.processes))
-	for _, cmd := range r.processes {
-		oldCmds = append(oldCmds, cmd)
-	}
-	r.processes = make(map[string]*exec.Cmd)
-	r.streamInfo = make(map[string]*StreamInfo)
 	close(r.stopHealth)
 	r.stopHealth = make(chan struct{})
 	r.mu.Unlock()
-
-	for _, cmd := range oldCmds {
-		if cmd != nil && cmd.Process != nil {
-			log.Printf("Stopping old recording (PID %d) for new cycle", cmd.Process.Pid)
-			GracefulStop(cmd, 5*time.Second)
-		}
-	}
 
 	delay := 0
 	for streamName := range go2cfg.Streams {
@@ -178,6 +166,7 @@ func (r *Recorder) runFFmpeg(streamName, outputFile string, duration int, myEpoc
 		PID:       0,
 		Duration:  duration,
 		Healthy:   true,
+		Epoch:     myEpoch,
 	}
 	r.mu.Unlock()
 
@@ -210,19 +199,37 @@ func (r *Recorder) runFFmpeg(streamName, outputFile string, duration int, myEpoc
 			return err
 		}
 		log.Printf("Stream %s recording finished successfully", streamName)
-	case <-time.After(time.Duration(duration+30) * time.Second):
-		log.Printf("Stream %s: duration+30s reached, sending SIGTERM", streamName)
-		GracefulStop(cmd, 30*time.Second)
-		log.Printf("Stream %s recording completed after timeout", streamName)
-		return fmt.Errorf("recording timeout after %ds", duration+30)
+	case <-time.After(time.Duration(duration+15) * time.Second):
+		log.Printf("Stream %s: ffmpeg did not exit after %ds, sending SIGTERM", streamName, duration+15)
+		if cmd.Process != nil {
+			syscall.Kill(cmd.Process.Pid, syscall.SIGTERM)
+		}
+		select {
+		case err = <-done:
+			if err != nil {
+				return err
+			}
+			log.Printf("Stream %s exited after SIGTERM", streamName)
+		case <-time.After(20 * time.Second):
+			log.Printf("Stream %s: still alive after SIGTERM, sending SIGKILL", streamName)
+			if cmd.Process != nil {
+				pgid := -cmd.Process.Pid
+				syscall.Kill(pgid, syscall.SIGKILL)
+			}
+			<-done
+			log.Printf("Stream %s killed by SIGKILL", streamName)
+			return fmt.Errorf("recording killed by SIGKILL after %ds", duration+35)
+		}
 	}
 
 	r.mu.Lock()
-	if _, ok := r.processes[streamName]; ok {
+	if s, ok := r.streamInfo[streamName]; ok && s.Epoch == myEpoch {
 		delete(r.processes, streamName)
 		delete(r.streamInfo, streamName)
 	}
 	r.mu.Unlock()
+
+	return err
 
 	return err
 }
@@ -294,22 +301,9 @@ func (r *Recorder) StartRecordingStream(name string) {
 	r.epoch++
 	myEpoch := r.epoch
 	r.failCount = make(map[string]int)
-	oldCmds := make([]*exec.Cmd, 0, len(r.processes))
-	for _, cmd := range r.processes {
-		oldCmds = append(oldCmds, cmd)
-	}
-	r.processes = make(map[string]*exec.Cmd)
-	r.streamInfo = make(map[string]*StreamInfo)
 	close(r.stopHealth)
 	r.stopHealth = make(chan struct{})
 	r.mu.Unlock()
-
-	for _, cmd := range oldCmds {
-		if cmd != nil && cmd.Process != nil {
-			log.Printf("Stopping old recording (PID %d) for new cycle", cmd.Process.Pid)
-			GracefulStop(cmd, 5*time.Second)
-		}
-	}
 
 	go r.recordStream(name, year, month, day, currentTime, dur, myEpoch)
 
