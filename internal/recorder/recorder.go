@@ -381,6 +381,20 @@ func (r *Recorder) healthCheck() {
 		for _, info := range infos {
 			r.checkStream(info, currentEpoch)
 		}
+
+		go2cfg, err := config.LoadGo2RTCConfig(r.config.Go2RTCConfigPath)
+		if err == nil {
+			for streamName := range go2cfg.Streams {
+				r.mu.Lock()
+				_, exists := r.streamInfo[streamName]
+				epoch := r.epoch
+				r.mu.Unlock()
+				if !exists && epoch == currentEpoch {
+					log.Printf("Health check: stream %s not in processes, restarting", streamName)
+					r.restartStream(streamName, currentEpoch)
+				}
+			}
+		}
 	}
 }
 
