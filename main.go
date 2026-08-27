@@ -121,6 +121,7 @@ func main() {
 		alarmSrv.Stop()
 		hikvisionAlarm.Stop()
 		rec.StopRecording()
+		log.Printf("Shutdown complete")
 		os.Exit(0)
 	}()
 

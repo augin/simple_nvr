@@ -353,14 +353,23 @@ func (r *Recorder) StopRecording() {
 	r.processes = make(map[string]*exec.Cmd)
 	r.streamInfo = make(map[string]*StreamInfo)
 	r.active = false
+	close(r.stopHealth)
 	r.mu.Unlock()
 
+	log.Printf("Stopping %d recording processes...", len(cmds))
+	var wg sync.WaitGroup
 	for _, cmd := range cmds {
 		if cmd != nil && cmd.Process != nil {
-			log.Printf("Stopping recording (PID %d)", cmd.Process.Pid)
-			GracefulStop(cmd, 5*time.Second)
+			wg.Add(1)
+			go func(c *exec.Cmd) {
+				defer wg.Done()
+				log.Printf("Stopping recording (PID %d)", c.Process.Pid)
+				GracefulStop(c, 15*time.Second)
+			}(cmd)
 		}
 	}
+	wg.Wait()
+	log.Printf("All recordings stopped")
 }
 
 func (r *Recorder) IsRecording() bool {
