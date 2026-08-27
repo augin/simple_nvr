@@ -16,12 +16,13 @@ import (
 )
 
 type StreamInfo struct {
-	Name      string `json:"name"`
-	Output    string `json:"output"`
-	StartTime string `json:"startTime"`
-	PID       int    `json:"pid"`
-	Duration  int    `json:"duration"`
-	Healthy   bool   `json:"healthy"`
+	Name      string    `json:"name"`
+	Output    string    `json:"output"`
+	StartTime string    `json:"startTime"`
+	PID       int       `json:"pid"`
+	Duration  int       `json:"duration"`
+	Healthy   bool      `json:"healthy"`
+	StartedAt time.Time `json:"-"`
 }
 
 type Recorder struct {
@@ -158,6 +159,7 @@ func (r *Recorder) runFFmpeg(streamName, outputFile string, duration int, myEpoc
 		PID:       0,
 		Duration:  duration,
 		Healthy:   true,
+		StartedAt: time.Now(),
 	}
 	r.mu.Unlock()
 
@@ -400,9 +402,14 @@ func (r *Recorder) checkStream(info *StreamInfo, currentEpoch int64) {
 	epoch := r.epoch
 	failCnt := r.failCount[info.Name]
 	lastF := r.lastFail[info.Name]
+	startedAt := info.StartedAt
 	r.mu.Unlock()
 
 	if !ok || epoch != currentEpoch {
+		return
+	}
+
+	if time.Since(startedAt) < 30*time.Second {
 		return
 	}
 
