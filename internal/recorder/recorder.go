@@ -21,6 +21,8 @@ type StreamInfo struct {
 	StartTime string `json:"startTime"`
 	PID       int    `json:"pid"`
 	Duration  int    `json:"duration"`
+	Healthy   bool   `json:"healthy"`
+	FileSize  int64  `json:"file_size"`
 }
 
 type Recorder struct {
@@ -34,12 +36,14 @@ type Recorder struct {
 }
 
 func NewRecorder(cfg *config.NVRConfig) *Recorder {
-	return &Recorder{
+	r := &Recorder{
 		config:     cfg,
 		processes:  make(map[string]*exec.Cmd),
 		streamInfo: make(map[string]*StreamInfo),
 		duration:   607,
 	}
+	go r.healthCheck()
+	return r
 }
 
 func (r *Recorder) StartRecording(durations ...int) {
@@ -148,6 +152,7 @@ func (r *Recorder) runFFmpeg(streamName, outputFile string, duration int, myEpoc
 		StartTime: time.Now().Format("15:04:05"),
 		PID:       0,
 		Duration:  duration,
+		Healthy:   true,
 	}
 	r.mu.Unlock()
 
@@ -352,4 +357,101 @@ func (r *Recorder) ActiveRecordings() map[string]bool {
 
 func (r *Recorder) Config() *config.NVRConfig {
 	return r.config
+}
+
+func (r *Recorder) StartHealthCheck() {
+	go r.healthCheck()
+}
+
+func (r *Recorder) healthCheck() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		r.mu.Lock()
+		if !r.active {
+			r.mu.Unlock()
+			continue
+		}
+
+		currentEpoch := r.epoch
+		infos := make([]*StreamInfo, 0, len(r.streamInfo))
+		for _, s := range r.streamInfo {
+			infos = append(infos, s)
+		}
+		r.mu.Unlock()
+
+		for _, info := range infos {
+			r.checkStream(info, currentEpoch)
+		}
+	}
+}
+
+func (r *Recorder) checkStream(info *StreamInfo, currentEpoch int64) {
+	r.mu.Lock()
+	cmd, ok := r.processes[info.Name]
+	epoch := r.epoch
+	r.mu.Unlock()
+
+	if !ok || epoch != currentEpoch {
+		return
+	}
+
+	healthy := true
+	var fileSize int64
+
+	if cmd.Process != nil {
+		if err := syscall.Kill(cmd.Process.Pid, 0); err != nil {
+			healthy = false
+		}
+	}
+
+	if healthy && info.Output != "" {
+		fi, err := os.Stat(info.Output)
+		if err != nil || fi.Size() == 0 {
+			healthy = false
+		} else {
+			fileSize = fi.Size()
+		}
+	}
+
+	r.mu.Lock()
+	if s, ok := r.streamInfo[info.Name]; ok {
+		s.Healthy = healthy
+		s.FileSize = fileSize
+	}
+	r.mu.Unlock()
+
+	if !healthy {
+		log.Printf("Health check: stream %s unhealthy, restarting", info.Name)
+		r.restartStream(info.Name, currentEpoch)
+	}
+}
+
+func (r *Recorder) restartStream(name string, currentEpoch int64) {
+	r.mu.Lock()
+	if r.epoch != currentEpoch {
+		r.mu.Unlock()
+		return
+	}
+	oldCmd, ok := r.processes[name]
+	if ok {
+		delete(r.processes, name)
+		delete(r.streamInfo, name)
+	}
+	r.mu.Unlock()
+
+	if ok && oldCmd != nil && oldCmd.Process != nil {
+		log.Printf("Health check: stopping unhealthy process for %s (PID %d)", name, oldCmd.Process.Pid)
+		GracefulStop(oldCmd, 5*time.Second)
+	}
+
+	now := time.Now()
+	year := now.Format("2006")
+	month := now.Format("01")
+	day := now.Format("02")
+	currentTime := now.Format("15-04")
+
+	log.Printf("Health check: restarting recording for %s", name)
+	go r.recordStream(name, year, month, day, currentTime, r.duration, currentEpoch)
 }

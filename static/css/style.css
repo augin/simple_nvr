@@ -629,6 +629,11 @@ body {
   box-shadow: none;
 }
 
+.led-yellow {
+  background-color: var(--warning);
+  box-shadow: 0 0 4px var(--warning);
+}
+
 .recording-indicator {
   display: flex;
   align-items: center;
@@ -688,6 +693,13 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.process-item .process-size {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-family: monospace;
+  white-space: nowrap;
 }
 
 .process-item .process-remaining {

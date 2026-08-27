@@ -781,8 +781,13 @@ async function fetchStatus() {
     if (titleEl) {
       const procs = data.processes || [];
       const total = data.totalStreams || 0;
+      const unhealthy = procs.filter(p => p.healthy === false).length;
       if (data.recording && total > 0) {
-        titleEl.textContent = `Запись: ${procs.length}/${total}`;
+        let txt = `Запись: ${procs.length}/${total}`;
+        if (unhealthy > 0) {
+          txt += ` (${unhealthy} ошибки)`;
+        }
+        titleEl.textContent = txt;
       } else {
         titleEl.textContent = 'Процессы записи';
       }
@@ -815,11 +820,14 @@ async function fetchStatus() {
         const now = Date.now();
         procEl.innerHTML = procs.map(p => {
           const remaining = calcRemaining(p.startTime, p.duration, now);
+          const ledClass = p.healthy === false ? 'led led-yellow' : 'led led-red';
+          const sizeStr = p.file_size > 0 ? formatSize(p.file_size) : '';
           return `<div class="process-item">
-            <span class="led led-red"></span>
+            <span class="${ledClass}"></span>
             <span class="process-name">${p.name}</span>
             <span class="process-meta">${p.startTime}</span>
             <span class="process-file">${p.output || ''}</span>
+            <span class="process-size">${sizeStr}</span>
             <span class="process-remaining">${remaining}</span>
           </div>`;
         }).join('');
@@ -841,6 +849,13 @@ function calcRemaining(startTime, duration, now) {
   const m = Math.floor(rem / 60);
   const s = rem % 60;
   return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' Б';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' КБ';
+  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' МБ';
+  return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' ГБ';
 }
 
 async function loadSettings() {
