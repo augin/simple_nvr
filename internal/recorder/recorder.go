@@ -33,7 +33,6 @@ type Recorder struct {
 	duration   int
 	epoch      int64
 	failCount  map[string]int
-	lastFail   map[string]time.Time
 }
 
 func NewRecorder(cfg *config.NVRConfig) *Recorder {
@@ -43,7 +42,6 @@ func NewRecorder(cfg *config.NVRConfig) *Recorder {
 		streamInfo: make(map[string]*StreamInfo),
 		duration:   607,
 		failCount:  make(map[string]int),
-		lastFail:   make(map[string]time.Time),
 	}
 	go r.healthCheck()
 	return r
@@ -82,7 +80,6 @@ func (r *Recorder) startRecordingAt(scheduledTime time.Time, durations ...int) {
 	r.epoch++
 	myEpoch := r.epoch
 	r.failCount = make(map[string]int)
-	r.lastFail = make(map[string]time.Time)
 	r.mu.Unlock()
 
 	delay := 0
@@ -263,7 +260,6 @@ func (r *Recorder) StartRecordingStream(name string) {
 	r.epoch++
 	myEpoch := r.epoch
 	r.failCount = make(map[string]int)
-	r.lastFail = make(map[string]time.Time)
 	r.mu.Unlock()
 
 	go r.recordStream(name, year, month, day, currentTime, dur, myEpoch)
@@ -388,9 +384,17 @@ func (r *Recorder) healthCheck() {
 				r.mu.Lock()
 				_, exists := r.streamInfo[streamName]
 				epoch := r.epoch
+				failCnt := r.failCount[streamName]
 				r.mu.Unlock()
 				if !exists && epoch == currentEpoch {
-					log.Printf("Health check: stream %s not in processes, restarting", streamName)
+					if failCnt >= 3 {
+						log.Printf("Health check: stream %s not in processes, failed %d times, skipping", streamName, failCnt)
+						continue
+					}
+					log.Printf("Health check: stream %s not in processes (fail %d/3), restarting", streamName, failCnt+1)
+					r.mu.Lock()
+					r.failCount[streamName] = failCnt + 1
+					r.mu.Unlock()
 					r.restartStream(streamName, currentEpoch)
 				}
 			}
@@ -403,7 +407,6 @@ func (r *Recorder) checkStream(info *StreamInfo, currentEpoch int64) {
 	cmd, ok := r.processes[info.Name]
 	epoch := r.epoch
 	failCnt := r.failCount[info.Name]
-	lastF := r.lastFail[info.Name]
 	r.mu.Unlock()
 
 	if !ok || epoch != currentEpoch {
@@ -425,14 +428,6 @@ func (r *Recorder) checkStream(info *StreamInfo, currentEpoch int64) {
 	r.mu.Unlock()
 
 	if !healthy {
-		now := time.Now()
-		if now.Sub(lastF) > 60*time.Second {
-			r.mu.Lock()
-			r.failCount[info.Name] = 0
-			r.mu.Unlock()
-			failCnt = 0
-		}
-
 		if failCnt >= 3 {
 			log.Printf("Health check: stream %s failed %d times, skipping restart until next cycle", info.Name, failCnt)
 			return
@@ -441,7 +436,6 @@ func (r *Recorder) checkStream(info *StreamInfo, currentEpoch int64) {
 		log.Printf("Health check: stream %s unhealthy (fail %d/3), restarting", info.Name, failCnt+1)
 		r.mu.Lock()
 		r.failCount[info.Name] = failCnt + 1
-		r.lastFail[info.Name] = now
 		r.mu.Unlock()
 
 		r.restartStream(info.Name, currentEpoch)
