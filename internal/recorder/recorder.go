@@ -111,22 +111,12 @@ func (r *Recorder) recordStream(streamName, year, month, day, currentTime string
 
 	outputFile := filepath.Join(directory, fmt.Sprintf("%s.mp4", currentTime))
 
-	var lastErr error
-	for attempt := 0; attempt <= 1; attempt++ {
-		if attempt > 0 {
-			log.Printf("Retrying stream %s in 5s (attempt %d)", streamName, attempt+1)
-			time.Sleep(5 * time.Second)
-		}
-
-		lastErr = r.runFFmpeg(streamName, outputFile, duration, myEpoch)
-		if lastErr == nil {
-			return
-		}
-
-		log.Printf("Error recording stream %s: %v", streamName, lastErr)
+	err := r.runFFmpeg(streamName, outputFile, duration, myEpoch)
+	if err != nil {
+		log.Printf("Error recording stream %s: %v", streamName, err)
+	} else {
+		log.Printf("Stream %s recording finished successfully", streamName)
 	}
-
-	log.Printf("Stream %s failed after retry: %v", streamName, lastErr)
 }
 
 func (r *Recorder) runFFmpeg(streamName, outputFile string, duration int, myEpoch int64) error {
