@@ -13,6 +13,12 @@
 - Обрезка видео с выбором реального времени начала/конца
 - Архив обрезанных клипов с удалением
 - Управление записью (старт/стоп) из интерфейса
+- Здоровье записей — health check каждые 5 секунд, автоперезапуск упавших стримов (макс. 3 попытки за цикл)
+- Корректное завершение ffmpeg — стрим завершается сам через `-t`, SIGTERM через 15 сек, SIGKILL через 20 сек
+- Параллельная остановка — все процессы завершаются одновременно при shutdown
+- Защита от дублей — проверка эпохи при очистке streamInfo, остановка health check при смене цикла
+- Staggered start — камеры запускаются с задержкой 250мс для снижения нагрузки
+- ffmpeg с `ionice -c3` (idle I/O) и `timeout` для снижения влияния на систему
 - Система тревог (TCP-сервер Dahua/XM, HTTP Hikvision)
 - Системные логи с кольцевым буфером и автопрокруткой
 - Авторизация с ролями admin/user
@@ -69,7 +75,7 @@ internal/
   config/config.go               NVRConfig, Go2RTCConfig, загрузка/сохранение/валидация
   auth/auth.go                   UserStore, сессии, роли, RequireAuth
   logs/logs.go                   LogBuffer, кольцевой буфер логов
-  recorder/recorder.go           Recorder, StreamInfo, GracefulStop
+  recorder/recorder.go           Recorder, StreamInfo, GracefulStop, healthCheck, staggered start
   storage/storage.go             Storage, лимиты диска, очистка
   alarm/
     alarm.go                     AlarmServer (Dahua/XM), MQTT, TCP
@@ -78,7 +84,7 @@ internal/
   recovery/
     recovery.go                  RecoverWithFFmpeg, tryFFmpegMovRepair
     nal_parser.go                NAL-парсинг H.264/HEVC, SPS/PPS/VPS
-  kiosk/kiosk.go                 KioskServer (reverse proxy)
+  kiosk/kiosk.go                 KioskServer (reverse proxy), {{VERSION}} replacement
   api/
     api.go                       ядро API, requireAdminRole, go2rtcAPIBase
     cameras.go                   CRUD камер, go2rtc reorder
@@ -153,6 +159,28 @@ docker run -d \
 ```
 
 В Docker-образе киоск-режим включён по умолчанию (порт 8181). Чтобы отключить, добавьте `kiosk_enabled: false` в конфиг.
+
+## Здоровье записей (Health Check)
+
+Каждые 5 секунд проверяются все активные процессы записи:
+
+1. **Проверка процесса** — `kill(pid, 0)` проверяет alive
+2. **Проверка отсутствия** — стримы из go2rtc.yaml, которых нет в streamInfo, перезапускаются
+3. **Cooldown** — максимум 3 попытки перезапуска за цикл (10 минут), затем пропуск до следующего цикла
+4. **Staggered start** — камеры запускаются с задержкой 250мс для снижения нагрузки на сеть и диск
+
+### Завершение ffmpeg
+
+- ffmpeg записывает ровно `-t` секунд и завершается сам
+- Если не завершился — через 15 секунд отправляется SIGTERM
+- Если не завершился после SIGTERM — через 20 секунд отправляется SIGKILL
+- При остановке сервиса все процессы завершаются **параллельно** через SIGTERM (таймаут 15 сек)
+
+### Защита от дублей
+
+- Каждый цикл записи имеет уникальную эпоху (epoch)
+- При старте нового цикла старые health check останавливаются через `stopHealth` канал
+- При очистке streamInfo проверяется эпохи — старые goroutine не удаляют записи нового цикла
 
 ## Авторизация
 
