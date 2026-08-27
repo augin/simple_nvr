@@ -100,6 +100,7 @@ func (r *Recorder) startRecordingAt(scheduledTime time.Time, durations ...int) {
 }
 
 func (r *Recorder) recordStream(streamName, year, month, day, currentTime string, duration int, myEpoch int64) {
+	startTime := time.Now()
 	directory := filepath.Join(r.config.BaseDir, streamName, year, month, day)
 	if err := os.MkdirAll(directory, 0755); err != nil {
 		log.Printf("Error creating directory %s: %v", directory, err)
@@ -109,10 +110,14 @@ func (r *Recorder) recordStream(streamName, year, month, day, currentTime string
 	outputFile := filepath.Join(directory, fmt.Sprintf("%s.mp4", currentTime))
 
 	err := r.runFFmpeg(streamName, outputFile, duration, myEpoch)
+	elapsed := time.Since(startTime).Truncate(time.Millisecond)
 	if err != nil {
-		log.Printf("Error recording stream %s: %v", streamName, err)
+		log.Printf("Error recording stream %s: %v (ran %v)", streamName, err, elapsed)
 	} else {
-		log.Printf("Stream %s recording finished successfully", streamName)
+		log.Printf("Stream %s recording finished successfully (ran %v, expected %ds)", streamName, elapsed, duration)
+	}
+	if elapsed < 5*time.Second {
+		log.Printf("WARNING: stream %s exited after only %v — possible camera/connection issue", streamName, elapsed)
 	}
 }
 
@@ -387,14 +392,15 @@ func (r *Recorder) healthCheck() {
 				failCnt := r.failCount[streamName]
 				r.mu.Unlock()
 				if !exists && epoch == currentEpoch {
-				if failCnt >= 3 {
-					continue
-				}
+					if failCnt >= 3 {
+						continue
+					}
 					log.Printf("Health check: stream %s not in processes (fail %d/3), restarting", streamName, failCnt+1)
 					r.mu.Lock()
 					r.failCount[streamName] = failCnt + 1
 					r.mu.Unlock()
 					r.restartStream(streamName, currentEpoch)
+					time.Sleep(2 * time.Second)
 				}
 			}
 		}
@@ -437,6 +443,7 @@ func (r *Recorder) checkStream(info *StreamInfo, currentEpoch int64) {
 		r.mu.Unlock()
 
 		r.restartStream(info.Name, currentEpoch)
+		time.Sleep(2 * time.Second)
 	}
 }
 
