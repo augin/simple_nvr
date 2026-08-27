@@ -32,6 +32,8 @@ type Recorder struct {
 	active     bool
 	duration   int
 	epoch      int64
+	failCount  map[string]int
+	lastFail   map[string]time.Time
 }
 
 func NewRecorder(cfg *config.NVRConfig) *Recorder {
@@ -40,6 +42,8 @@ func NewRecorder(cfg *config.NVRConfig) *Recorder {
 		processes:  make(map[string]*exec.Cmd),
 		streamInfo: make(map[string]*StreamInfo),
 		duration:   607,
+		failCount:  make(map[string]int),
+		lastFail:   make(map[string]time.Time),
 	}
 	go r.healthCheck()
 	return r
@@ -77,6 +81,8 @@ func (r *Recorder) startRecordingAt(scheduledTime time.Time, durations ...int) {
 	r.active = true
 	r.epoch++
 	myEpoch := r.epoch
+	r.failCount = make(map[string]int)
+	r.lastFail = make(map[string]time.Time)
 	r.mu.Unlock()
 
 	delay := 0
@@ -266,6 +272,8 @@ func (r *Recorder) StartRecordingStream(name string) {
 	r.active = true
 	r.epoch++
 	myEpoch := r.epoch
+	r.failCount = make(map[string]int)
+	r.lastFail = make(map[string]time.Time)
 	r.mu.Unlock()
 
 	go r.recordStream(name, year, month, day, currentTime, dur, myEpoch)
@@ -390,6 +398,8 @@ func (r *Recorder) checkStream(info *StreamInfo, currentEpoch int64) {
 	r.mu.Lock()
 	cmd, ok := r.processes[info.Name]
 	epoch := r.epoch
+	failCnt := r.failCount[info.Name]
+	lastF := r.lastFail[info.Name]
 	r.mu.Unlock()
 
 	if !ok || epoch != currentEpoch {
@@ -411,7 +421,25 @@ func (r *Recorder) checkStream(info *StreamInfo, currentEpoch int64) {
 	r.mu.Unlock()
 
 	if !healthy {
-		log.Printf("Health check: stream %s unhealthy, restarting", info.Name)
+		now := time.Now()
+		if now.Sub(lastF) > 60*time.Second {
+			r.mu.Lock()
+			r.failCount[info.Name] = 0
+			r.mu.Unlock()
+			failCnt = 0
+		}
+
+		if failCnt >= 3 {
+			log.Printf("Health check: stream %s failed %d times, skipping restart until next cycle", info.Name, failCnt)
+			return
+		}
+
+		log.Printf("Health check: stream %s unhealthy (fail %d/3), restarting", info.Name, failCnt+1)
+		r.mu.Lock()
+		r.failCount[info.Name] = failCnt + 1
+		r.lastFail[info.Name] = now
+		r.mu.Unlock()
+
 		r.restartStream(info.Name, currentEpoch)
 	}
 }
