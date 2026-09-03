@@ -3,6 +3,8 @@ package recorder
 import (
 	"fmt"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,25 +28,27 @@ type StreamInfo struct {
 }
 
 type Recorder struct {
-	mu         sync.Mutex
-	config     *config.NVRConfig
-	processes  map[string]*exec.Cmd
-	streamInfo map[string]*StreamInfo
-	active     bool
-	duration   int
-	epoch      int64
-	failCount  map[string]int
-	stopHealth chan struct{}
+	mu            sync.Mutex
+	config        *config.NVRConfig
+	processes     map[string]*exec.Cmd
+	streamInfo    map[string]*StreamInfo
+	active        bool
+	duration      int
+	epoch         int64
+	failCount     map[string]int
+	segfaultCount map[string]int
+	stopHealth    chan struct{}
 }
 
 func NewRecorder(cfg *config.NVRConfig) *Recorder {
 	r := &Recorder{
-		config:     cfg,
-		processes:  make(map[string]*exec.Cmd),
-		streamInfo: make(map[string]*StreamInfo),
-		duration:   607,
-		failCount:  make(map[string]int),
-		stopHealth: make(chan struct{}),
+		config:        cfg,
+		processes:     make(map[string]*exec.Cmd),
+		streamInfo:    make(map[string]*StreamInfo),
+		duration:      607,
+		failCount:     make(map[string]int),
+		segfaultCount: make(map[string]int),
+		stopHealth:    make(chan struct{}),
 	}
 	return r
 }
@@ -129,8 +133,30 @@ func (r *Recorder) recordStream(streamName, year, month, day, currentTime string
 	elapsed := time.Since(startTime).Truncate(time.Millisecond)
 	if err != nil {
 		log.Printf("Error recording stream %s: %v (ran %v)", streamName, err, elapsed)
+
+		if strings.Contains(err.Error(), "segmentation fault") {
+			r.mu.Lock()
+			r.segfaultCount[streamName]++
+			cnt := r.segfaultCount[streamName]
+			r.mu.Unlock()
+			log.Printf("Stream %s: segfault count %d/3", streamName, cnt)
+			if cnt >= 3 {
+				log.Printf("Stream %s: 3+ consecutive segfaults, restarting go2rtc", streamName)
+				if err := r.restartGo2RTC(); err != nil {
+					log.Printf("Failed to restart go2rtc: %v", err)
+				} else {
+					log.Printf("go2rtc restarted successfully")
+					r.mu.Lock()
+					r.segfaultCount = make(map[string]int)
+					r.mu.Unlock()
+				}
+			}
+		}
 	} else {
 		log.Printf("Stream %s recording finished successfully (ran %v, expected %ds)", streamName, elapsed, duration)
+		r.mu.Lock()
+		r.segfaultCount[streamName] = 0
+		r.mu.Unlock()
 	}
 	if elapsed < 5*time.Second {
 		log.Printf("WARNING: stream %s exited after only %v — possible camera/connection issue", streamName, elapsed)
@@ -228,8 +254,6 @@ func (r *Recorder) runFFmpeg(streamName, outputFile string, duration int, myEpoc
 		delete(r.streamInfo, streamName)
 	}
 	r.mu.Unlock()
-
-	return err
 
 	return err
 }
@@ -534,4 +558,27 @@ func (r *Recorder) restartStream(name string, currentEpoch int64) {
 
 	log.Printf("Health check: restarting recording for %s", name)
 	go r.recordStream(name, year, month, day, currentTime, r.duration, currentEpoch)
+}
+
+func (r *Recorder) go2rtcAPIBase() string {
+	if r.config.StreamServer != "" {
+		if u, err := url.Parse(r.config.StreamServer); err == nil && u.Hostname() != "" {
+			return "http://" + u.Hostname() + ":1984"
+		}
+	}
+	return "http://localhost:1984"
+}
+
+func (r *Recorder) restartGo2RTC() error {
+	apiBase := r.go2rtcAPIBase()
+	log.Printf("Restarting go2rtc via %s/api/restart", apiBase)
+	resp, err := http.Post(apiBase+"/api/restart", "", nil)
+	if err != nil {
+		return fmt.Errorf("go2rtc restart failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("go2rtc restart returned status %d", resp.StatusCode)
+	}
+	return nil
 }
