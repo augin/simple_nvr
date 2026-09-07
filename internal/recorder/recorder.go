@@ -140,14 +140,13 @@ func (r *Recorder) recordStream(streamName, year, month, day, currentTime string
 			r.mu.Unlock()
 			log.Printf("Stream %s: segfault count %d/3 (global)", streamName, cnt)
 			if cnt >= 3 {
-				log.Printf("3+ consecutive segfaults detected, restarting go2rtc")
-				if err := r.restartGo2RTC(); err != nil {
-					log.Printf("Failed to restart go2rtc: %v", err)
+				log.Printf("3+ consecutive segfaults detected, restarting service")
+				cmd := exec.Command("systemctl", "restart", "simple-nvr")
+				if _, err := cmd.CombinedOutput(); err != nil {
+					log.Printf("systemctl not available (%v), exiting for container restart", err)
+					os.Exit(1)
 				} else {
-					log.Printf("go2rtc restarted successfully")
-					r.mu.Lock()
-					r.segfaultTotal = 0
-					r.mu.Unlock()
+					log.Printf("Service restart triggered")
 				}
 			}
 		}
