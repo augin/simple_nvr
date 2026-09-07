@@ -36,19 +36,18 @@ type Recorder struct {
 	duration      int
 	epoch         int64
 	failCount     map[string]int
-	segfaultCount map[string]int
+	segfaultTotal int
 	stopHealth    chan struct{}
 }
 
 func NewRecorder(cfg *config.NVRConfig) *Recorder {
 	r := &Recorder{
-		config:        cfg,
-		processes:     make(map[string]*exec.Cmd),
-		streamInfo:    make(map[string]*StreamInfo),
-		duration:      607,
-		failCount:     make(map[string]int),
-		segfaultCount: make(map[string]int),
-		stopHealth:    make(chan struct{}),
+		config:     cfg,
+		processes:  make(map[string]*exec.Cmd),
+		streamInfo: make(map[string]*StreamInfo),
+		duration:   607,
+		failCount:  make(map[string]int),
+		stopHealth: make(chan struct{}),
 	}
 	return r
 }
@@ -136,18 +135,18 @@ func (r *Recorder) recordStream(streamName, year, month, day, currentTime string
 
 		if strings.Contains(err.Error(), "segmentation fault") {
 			r.mu.Lock()
-			r.segfaultCount[streamName]++
-			cnt := r.segfaultCount[streamName]
+			r.segfaultTotal++
+			cnt := r.segfaultTotal
 			r.mu.Unlock()
-			log.Printf("Stream %s: segfault count %d/3", streamName, cnt)
+			log.Printf("Stream %s: segfault count %d/3 (global)", streamName, cnt)
 			if cnt >= 3 {
-				log.Printf("Stream %s: 3+ consecutive segfaults, restarting go2rtc", streamName)
+				log.Printf("3+ consecutive segfaults detected, restarting go2rtc")
 				if err := r.restartGo2RTC(); err != nil {
 					log.Printf("Failed to restart go2rtc: %v", err)
 				} else {
 					log.Printf("go2rtc restarted successfully")
 					r.mu.Lock()
-					r.segfaultCount = make(map[string]int)
+					r.segfaultTotal = 0
 					r.mu.Unlock()
 				}
 			}
@@ -155,7 +154,7 @@ func (r *Recorder) recordStream(streamName, year, month, day, currentTime string
 	} else {
 		log.Printf("Stream %s recording finished successfully (ran %v, expected %ds)", streamName, elapsed, duration)
 		r.mu.Lock()
-		r.segfaultCount[streamName] = 0
+		r.segfaultTotal = 0
 		r.mu.Unlock()
 	}
 	if elapsed < 5*time.Second {
