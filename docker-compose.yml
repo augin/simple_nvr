@@ -1,0 +1,11 @@
+services:
+  simple-nvr:
+    build: .
+    restart: always
+    ports:
+      - "8180:8180"
+      - "8181:8181"
+    volumes:
+      - ./config:/config
+      - /mnt/st2/video:/share/video
+      - /etc/go2rtc:/etc/go2rtc:ro
