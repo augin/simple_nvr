@@ -167,6 +167,7 @@ jobs:
 
         cd /tmp/apt-repo
         apt-ftparchive release dists/stable > dists/stable/Release
+        sed -i '1iOrigin: augin\nLabel: augin\nSuite: stable\nCodename: stable\nArchitectures: amd64 arm64 armhf\nDescription: APT Repository for augin packages' dists/stable/Release
 
         gpg --batch --yes --armor --detach-sign \
           --default-key ${{ secrets.APT_GPG_KEY_ID }} \
