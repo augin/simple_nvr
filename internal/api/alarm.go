@@ -1,112 +1,108 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"simple_nvr/internal/alarm"
-	"simple_nvr/internal/config"
 )
+
+// alarmDateLayout is the on-disk journal file layout (YYYY-MM-DD.jsonl).
+const alarmDateLayout = "2006-01-02"
 
 func (a *API) HandleAlarmStatus(w http.ResponseWriter, r *http.Request) {
 	dahuaStatus := a.alarm.GetStatus()
 	hikvisionStatus := a.hikvisionAlarm.GetStatus()
 
-	status := map[string]any{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"dahua":       dahuaStatus,
 		"hikvision":   hikvisionStatus,
 		"event_count": dahuaStatus["event_count"],
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(status)
+	})
 }
 
 func (a *API) HandleAlarmStart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	if !requireAdminRole(r) {
-		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
 	if err := a.alarm.Start(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	a.config.AlarmEnabled = true
-	config.SaveNVRConfig(a.configPath, a.config)
+	saveConfigQuietly(a.configPath, a.config)
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "started"})
+	writeStatus(w, "started")
 }
 
 func (a *API) HandleAlarmStop(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	if !requireAdminRole(r) {
-		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
 	a.alarm.Stop()
 
 	a.config.AlarmEnabled = false
-	config.SaveNVRConfig(a.configPath, a.config)
+	saveConfigQuietly(a.configPath, a.config)
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "stopped"})
+	writeStatus(w, "stopped")
 }
 
 func (a *API) HandleHikvisionAlarmStart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	if !requireAdminRole(r) {
-		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
 	if err := a.hikvisionAlarm.Start(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	a.config.HikvisionEnabled = true
-	config.SaveNVRConfig(a.configPath, a.config)
+	saveConfigQuietly(a.configPath, a.config)
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "started"})
+	writeStatus(w, "started")
 }
 
 func (a *API) HandleHikvisionAlarmStop(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	if !requireAdminRole(r) {
-		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
 	a.hikvisionAlarm.Stop()
 
 	a.config.HikvisionEnabled = false
-	config.SaveNVRConfig(a.configPath, a.config)
+	saveConfigQuietly(a.configPath, a.config)
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "stopped"})
+	writeStatus(w, "stopped")
 }
 
 func (a *API) HandleAlarmLog(w http.ResponseWriter, r *http.Request) {
@@ -117,24 +113,28 @@ func (a *API) HandleAlarmLog(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log := a.alarm.GetLog(limit)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(log)
+	writeJSON(w, http.StatusOK, a.alarm.GetLog(limit))
 }
 
 func (a *API) HandleAlarmsRange(w http.ResponseWriter, r *http.Request) {
 	camera := r.URL.Query().Get("camera")
 	date := r.URL.Query().Get("date")
 	if camera == "" || date == "" {
-		http.Error(w, "camera and date required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "camera and date required")
 		return
 	}
 
-	filePath := filepath.Join(alarm.AlarmDir, date+".jsonl")
+	// The date becomes a file name; anything but a plain YYYY-MM-DD would
+	// let a caller walk out of the journal directory.
+	if _, err := time.Parse(alarmDateLayout, date); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid date")
+		return
+	}
+
+	filePath := filepath.Join(a.alarm.EventDir(), date+".jsonl")
 	events, err := alarm.ReadEventsFile(filePath)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode([]alarm.AlarmEvent{})
+		writeJSON(w, http.StatusOK, []alarm.AlarmEvent{})
 		return
 	}
 
@@ -145,23 +145,21 @@ func (a *API) HandleAlarmsRange(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(filtered)
+	writeJSON(w, http.StatusOK, filtered)
 }
 
 func (a *API) HandleAlarmClear(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	if !requireAdminRole(r) {
-		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
 	a.alarm.ClearLog()
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "cleared"})
+	writeStatus(w, "cleared")
 }

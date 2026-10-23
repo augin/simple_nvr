@@ -1,57 +1,53 @@
 package api
 
 import (
-	"encoding/json"
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
-
-	"simple_nvr/internal/auth"
 )
 
 func (a *API) HandleArchive(w http.ResponseWriter, r *http.Request) {
 	camera := r.URL.Query().Get("camera")
 	if camera == "" {
-		http.Error(w, "camera parameter required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "camera parameter required")
 		return
 	}
 
-	cameraDir := filepath.Join(a.config.ArchiveDir, camera)
+	cameraDir, err := safeJoin(a.config.ArchiveDir, camera)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid camera")
+		return
+	}
 	if _, err := os.Stat(cameraDir); os.IsNotExist(err) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{})
+		writeJSON(w, http.StatusOK, map[string]any{})
 		return
 	}
 
 	result, err := listMP4Files(cameraDir)
 	if err != nil {
-		http.Error(w, "Error reading archive dir", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "Error reading archive dir")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (a *API) HandleArchiveVideo(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/archive/video/"), "/")
 	if len(parts) < 5 {
-		http.Error(w, "invalid video path", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid video path")
 		return
 	}
 
-	camera := parts[0]
-	year := parts[1]
-	month := parts[2]
-	day := parts[3]
-	file := parts[4]
-
-	videoPath := filepath.Join(a.config.ArchiveDir, camera, year, month, day, file)
+	videoPath, err := safeJoin(a.config.ArchiveDir, parts[0], parts[1], parts[2], parts[3], parts[4])
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid video path")
+		return
+	}
 
 	if _, err := os.Stat(videoPath); os.IsNotExist(err) {
-		http.Error(w, "video not found", http.StatusNotFound)
+		writeError(w, http.StatusNotFound, "video not found")
 		return
 	}
 
@@ -61,13 +57,12 @@ func (a *API) HandleArchiveVideo(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) HandleArchiveDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
-	_, role, _ := auth.GetUserFromContext(r)
-	if role != "admin" {
-		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+	if !requireAdminRole(r) {
+		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
@@ -76,22 +71,25 @@ func (a *API) HandleArchiveDelete(w http.ResponseWriter, r *http.Request) {
 	file := r.URL.Query().Get("file")
 
 	if camera == "" || folder == "" || file == "" {
-		http.Error(w, "missing parameters", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "missing parameters")
 		return
 	}
 
-	videoPath := filepath.Join(a.config.ArchiveDir, camera, folder, file)
+	videoPath, err := safeJoin(a.config.ArchiveDir, camera, folder, file)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid path")
+		return
+	}
 	if _, err := os.Stat(videoPath); os.IsNotExist(err) {
-		http.Error(w, "file not found", http.StatusNotFound)
+		writeError(w, http.StatusNotFound, "file not found")
 		return
 	}
 
 	if err := os.Remove(videoPath); err != nil {
 		log.Printf("Error deleting archive file %s: %v", videoPath, err)
-		http.Error(w, "delete error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "delete error")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+	writeStatus(w, "deleted")
 }

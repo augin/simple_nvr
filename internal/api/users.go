@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 
 	"simple_nvr/internal/auth"
@@ -10,7 +9,7 @@ import (
 
 func (a *API) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -19,21 +18,20 @@ func (a *API) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
 
 	user, err := a.userStore.Authenticate(req.Username, req.Password)
 	if err != nil {
-		http.Error(w, `{"error":"invalid credentials"}`, http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 
 	cookie := a.userStore.CreateSessionCookie(req.Username, user.Role)
 	http.SetCookie(w, cookie)
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	writeJSON(w, http.StatusOK, map[string]string{
 		"username": req.Username,
 		"role":     user.Role,
 	})
@@ -48,20 +46,17 @@ func (a *API) HandleLogout(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   -1,
 	})
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "logged out"})
+	writeStatus(w, "logged out")
 }
 
 func (a *API) HandleMe(w http.ResponseWriter, r *http.Request) {
 	username, role, ok := auth.GetUserFromContext(r)
 	if !ok {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"authorized": false})
+		writeJSON(w, http.StatusOK, map[string]any{"authorized": false})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"authorized": true,
 		"username":   username,
 		"role":       role,
@@ -70,8 +65,7 @@ func (a *API) HandleMe(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) HandleAuthCheck(w http.ResponseWriter, r *http.Request) {
 	if !a.userStore.HasUsers() {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"auth_required": false})
+		writeJSON(w, http.StatusOK, map[string]any{"auth_required": false})
 		return
 	}
 
@@ -86,13 +80,11 @@ func (a *API) HandleAuthCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !ok {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"auth_required": true, "authorized": false})
+		writeJSON(w, http.StatusOK, map[string]any{"auth_required": true, "authorized": false})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"auth_required": true,
 		"authorized":    true,
 		"username":      username,
@@ -101,21 +93,19 @@ func (a *API) HandleAuthCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) HandleGetUsers(w http.ResponseWriter, r *http.Request) {
-	users := a.userStore.GetUsers()
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(users)
+	writeJSON(w, http.StatusOK, a.userStore.GetUsers())
 }
 
 func (a *API) HandleAddUser(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
+	// The very first user is the bootstrap admin and needs no credentials.
 	if a.userStore.HasUsers() {
-		_, role, ok := auth.GetUserFromContext(r)
-		if !ok || role != "admin" {
-			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		if !requireAdminRole(r) {
+			writeError(w, http.StatusForbidden, "forbidden")
 			return
 		}
 	}
@@ -126,12 +116,12 @@ func (a *API) HandleAddUser(w http.ResponseWriter, r *http.Request) {
 		Role     string `json:"role"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
 
 	if req.Username == "" || req.Password == "" {
-		http.Error(w, `{"error":"username and password required"}`, http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "username and password required")
 		return
 	}
 
@@ -144,44 +134,42 @@ func (a *API) HandleAddUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := a.userStore.AddUser(req.Username, req.Password, req.Role); err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "created"})
+	writeStatus(w, "created")
 }
 
 func (a *API) HandleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	username := r.URL.Query().Get("username")
 	if username == "" {
-		http.Error(w, `{"error":"username required"}`, http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "username required")
 		return
 	}
 
 	currentUser, _, _ := auth.GetUserFromContext(r)
 	if currentUser == username {
-		http.Error(w, `{"error":"cannot delete yourself"}`, http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "cannot delete yourself")
 		return
 	}
 
 	if err := a.userStore.DeleteUser(username); err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+	writeStatus(w, "deleted")
 }
 
 func (a *API) HandleChangePassword(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -191,37 +179,36 @@ func (a *API) HandleChangePassword(w http.ResponseWriter, r *http.Request) {
 		NewPassword string `json:"new_password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
 
 	currentUser, currentRole, _ := auth.GetUserFromContext(r)
 
-	if currentRole != "admin" {
+	if currentRole != auth.RoleAdmin {
 		if currentUser != req.Username {
-			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+			writeError(w, http.StatusForbidden, "forbidden")
 			return
 		}
 		if req.OldPassword == "" {
-			http.Error(w, `{"error":"old password required"}`, http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "old password required")
 			return
 		}
 		if _, err := a.userStore.Authenticate(currentUser, req.OldPassword); err != nil {
-			http.Error(w, `{"error":"invalid old password"}`, http.StatusUnauthorized)
+			writeError(w, http.StatusUnauthorized, "invalid old password")
 			return
 		}
 	}
 
 	if req.NewPassword == "" {
-		http.Error(w, `{"error":"new password required"}`, http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "new password required")
 		return
 	}
 
 	if err := a.userStore.ChangePassword(req.Username, req.NewPassword); err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "password changed"})
+	writeStatus(w, "password changed")
 }

@@ -2,7 +2,6 @@ package api
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -14,6 +13,8 @@ import (
 	"strings"
 )
 
+// listMP4Files walks base/<year>/<month>/<day> and returns sorted .mp4 names
+// keyed by "year/month/day".
 func listMP4Files(basePath string) (map[string][]string, error) {
 	result := make(map[string][]string)
 
@@ -26,9 +27,8 @@ func listMP4Files(basePath string) (map[string][]string, error) {
 		if !yearEntry.IsDir() {
 			continue
 		}
-		yearDir := filepath.Join(basePath, yearEntry.Name())
 
-		monthEntries, err := os.ReadDir(yearDir)
+		monthEntries, err := os.ReadDir(filepath.Join(basePath, yearEntry.Name()))
 		if err != nil {
 			continue
 		}
@@ -37,9 +37,8 @@ func listMP4Files(basePath string) (map[string][]string, error) {
 			if !monthEntry.IsDir() {
 				continue
 			}
-			monthDir := filepath.Join(yearDir, monthEntry.Name())
 
-			dayEntries, err := os.ReadDir(monthDir)
+			dayEntries, err := os.ReadDir(filepath.Join(basePath, yearEntry.Name(), monthEntry.Name()))
 			if err != nil {
 				continue
 			}
@@ -48,9 +47,8 @@ func listMP4Files(basePath string) (map[string][]string, error) {
 				if !dayEntry.IsDir() {
 					continue
 				}
-				dayDir := filepath.Join(monthDir, dayEntry.Name())
 
-				files, err := os.ReadDir(dayDir)
+				files, err := os.ReadDir(filepath.Join(basePath, yearEntry.Name(), monthEntry.Name(), dayEntry.Name()))
 				if err != nil {
 					continue
 				}
@@ -77,49 +75,55 @@ func listMP4Files(basePath string) (map[string][]string, error) {
 func (a *API) HandleFiles(w http.ResponseWriter, r *http.Request) {
 	camera := r.URL.Query().Get("camera")
 	if camera == "" {
-		http.Error(w, "camera parameter required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "camera parameter required")
 		return
 	}
 
-	cameraDir := filepath.Join(a.config.BaseDir, camera)
+	cameraDir, err := safeJoin(a.config.BaseDir, camera)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid camera")
+		return
+	}
 	if _, err := os.Stat(cameraDir); os.IsNotExist(err) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{})
+		writeJSON(w, http.StatusOK, map[string]any{})
 		return
 	}
 
 	result, err := listMP4Files(cameraDir)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Error reading camera dir: %v", err), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Error reading camera dir: %v", err))
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (a *API) HandleVideo(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/video/"), "/")
 	if len(parts) < 5 {
-		http.Error(w, "invalid video path", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid video path")
 		return
 	}
 
-	camera := parts[0]
-	year := parts[1]
-	month := parts[2]
-	day := parts[3]
-	file := parts[4]
-
-	videoPath := filepath.Join(a.config.BaseDir, camera, year, month, day, file)
+	videoPath, err := safeJoin(a.config.BaseDir, parts[0], parts[1], parts[2], parts[3], parts[4])
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid video path")
+		return
+	}
 
 	if _, err := os.Stat(videoPath); os.IsNotExist(err) {
-		http.Error(w, "video not found", http.StatusNotFound)
+		writeError(w, http.StatusNotFound, "video not found")
 		return
 	}
 
 	w.Header().Set("Content-Type", "video/mp4")
 	http.ServeFile(w, r, videoPath)
+}
+
+// hhmmss formats seconds since midnight as HHMMSS for clip file names.
+func hhmmss(seconds float64) string {
+	s := int(seconds)
+	return fmt.Sprintf("%02d%02d%02d", s/3600, (s%3600)/60, s%60)
 }
 
 func (a *API) HandleVideoDownload(w http.ResponseWriter, r *http.Request) {
@@ -130,39 +134,45 @@ func (a *API) HandleVideoDownload(w http.ResponseWriter, r *http.Request) {
 	endStr := r.URL.Query().Get("end")
 
 	if camera == "" || folder == "" || file == "" {
-		http.Error(w, "missing parameters", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "missing parameters")
 		return
 	}
 
 	start, err := strconv.ParseFloat(startStr, 64)
 	if err != nil {
-		http.Error(w, "invalid start", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid start")
 		return
 	}
 	end, err := strconv.ParseFloat(endStr, 64)
 	if err != nil {
-		http.Error(w, "invalid end", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid end")
 		return
 	}
 	if end <= start {
-		http.Error(w, "end must be after start", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "end must be after start")
 		return
 	}
 
-	videoPath := filepath.Join(a.config.BaseDir, camera, folder, file)
+	videoPath, err := safeJoin(a.config.BaseDir, camera, folder, file)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid path")
+		return
+	}
 	if _, err := os.Stat(videoPath); os.IsNotExist(err) {
-		http.Error(w, "video not found", http.StatusNotFound)
+		writeError(w, http.StatusNotFound, "video not found")
 		return
 	}
 
-	outName := strings.TrimSuffix(file, ".mp4") + fmt.Sprintf("_%s-%s.mp4",
-		strings.ReplaceAll(fmt.Sprintf("%02d%02d%02d", int(start)/3600, (int(start)%3600)/60, int(start)%60), ":", ""),
-		strings.ReplaceAll(fmt.Sprintf("%02d%02d%02d", int(end)/3600, (int(end)%3600)/60, int(end)%60), ":", ""))
+	outName := strings.TrimSuffix(file, ".mp4") + fmt.Sprintf("_%s-%s.mp4", hhmmss(start), hhmmss(end))
 
-	archiveDir := filepath.Join(a.config.ArchiveDir, camera, folder)
+	archiveDir, err := safeJoin(a.config.ArchiveDir, camera, folder)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid path")
+		return
+	}
 	if err := os.MkdirAll(archiveDir, 0755); err != nil {
 		log.Printf("Error creating archive dir %s: %v", archiveDir, err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
@@ -182,14 +192,16 @@ func (a *API) HandleVideoDownload(w http.ResponseWriter, r *http.Request) {
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		log.Printf("Error trimming video %s: %v stderr: %s", videoPath, err, stderr.String())
-		http.Error(w, "trim error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "trim error")
 		return
 	}
 
-	fi, ferr := os.Stat(archivePath)
-	if ferr != nil || fi.Size() == 0 {
-		log.Printf("Trim produced empty file %s: size=%d stderr=%s", archivePath, fi.Size(), stderr.String())
-		http.Error(w, "trim produced empty file", http.StatusInternalServerError)
+	// The trim can exit zero yet write nothing; a missing file must not
+	// reach os.Stat results with a nil FileInfo.
+	fi, err := os.Stat(archivePath)
+	if err != nil || fi.Size() == 0 {
+		log.Printf("Trim produced empty file %s: err=%v stderr=%s", archivePath, err, stderr.String())
+		writeError(w, http.StatusInternalServerError, "trim produced empty file")
 		return
 	}
 

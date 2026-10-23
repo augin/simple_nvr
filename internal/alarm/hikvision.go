@@ -5,103 +5,188 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"simple_nvr/internal/config"
 )
 
+const maxHikvisionBody = 1024 * 1024
+
+// HikvisionEvent is the ISAPI EventNotificationAlert XML payload.
 type HikvisionEvent struct {
-	XMLName    xml.Name `xml:"EventNotificationAlert"`
-	IPAddress  string   `xml:"ipAddress"`
-	MACAddress string   `xml:"macAddress"`
-	ChannelID  string   `xml:"channelID"`
-	DateTime   string   `xml:"dateTime"`
-	EventType  string   `xml:"eventType"`
-	EventState string   `xml:"eventState"`
-	Describe   string   `xml:"eventDescription"`
-	ChannelName string  `xml:"channelName"`
+	XMLName     xml.Name `xml:"EventNotificationAlert"`
+	IPAddress   string   `xml:"ipAddress"`
+	MACAddress  string   `xml:"macAddress"`
+	ChannelID   string   `xml:"channelID"`
+	DateTime    string   `xml:"dateTime"`
+	EventType   string   `xml:"eventType"`
+	EventState  string   `xml:"eventState"`
+	Describe    string   `xml:"eventDescription"`
+	ChannelName string   `xml:"channelName"`
 }
 
+// hikvisionTypes maps ISAPI event types to the common alarm vocabulary.
+var hikvisionTypes = map[string]string{
+	"VMD":                  "Motion",
+	"motionDetection":      "Motion",
+	"linedetection":        "LineCross",
+	"lineDetection":        "LineCross",
+	"fielddetection":       "Intrusion",
+	"fieldDetection":       "Intrusion",
+	"regionEntrance":       "RegionEntrance",
+	"regionExiting":        "RegionExiting",
+	"faceDetection":        "Face",
+	"faceCapture":          "FaceSnap",
+	"peopleDetection":      "PeopleGather",
+	"group":                "PeopleGather",
+	"vehicleDetection":     "Vehicle",
+	"ANPR":                 "Vehicle",
+	"Shelteralarm":         "Tamper",
+	"tamperDetection":      "Tamper",
+	"defocusDetection":     "Defocus",
+	"defocus":              "Defocus",
+	"scenechangedetection": "SceneChange",
+	"videoLoss":            "VideoLoss",
+	"audioDetection":       "Audio",
+	"audioexception":       "Audio",
+	"diskfull":             "DiskFull",
+	"diskerror":            "DiskError",
+	"hdBadBlock":           "HDBadBlock",
+	"fireDetection":        "Fire",
+	"smokeDetection":       "Smoke",
+	"PIR":                  "PIR",
+	"loitering":            "Loitering",
+	"unattendedBaggage":    "UnattendedBaggage",
+	"attendedBaggage":      "ObjectRemoval",
+	"parking":              "Parking",
+	"rapidMove":            "FastMove",
+}
+
+// mapHikvisionType translates an ISPI event type to the internal name.
+func mapHikvisionType(hikType string) string {
+	if mapped, ok := hikvisionTypes[hikType]; ok {
+		return mapped
+	}
+	return hikType
+}
+
+// HikvisionAlarmServer accepts Hikvision ISAPI HTTP notifications.
 type HikvisionAlarmServer struct {
-	config   *config.NVRConfig
-	alarm    *AlarmServer
-	ipMap    map[string]string
+	config *config.NVRConfig
+	alarm  *AlarmServer
+	ipMap  map[string]string
+
+	mu       sync.Mutex
 	running  bool
+	listener net.Listener
 	server   *http.Server
-	stopCh   chan struct{}
 }
 
+// NewHikvisionAlarmServer creates a stopped server.
 func NewHikvisionAlarmServer(cfg *config.NVRConfig, alarmServer *AlarmServer, ipMap map[string]string) *HikvisionAlarmServer {
 	return &HikvisionAlarmServer{
 		config: cfg,
 		alarm:  alarmServer,
 		ipMap:  ipMap,
-		stopCh: make(chan struct{}),
 	}
 }
 
+// Start binds the HTTP port and serves notifications in the background.
 func (s *HikvisionAlarmServer) Start() error {
-	s.running = true
-	s.stopCh = make(chan struct{})
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/hikvision/alarm", s.handleAlarm)
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(io.LimitReader(r.Body, 1024*1024))
-		log.Printf("Hikvision unknown path: %s %s from %s body=%s", r.Method, r.URL.Path, r.RemoteAddr, string(body))
-		http.NotFound(w, r)
-	})
+	if s.running {
+		return fmt.Errorf("hikvision alarm server already running")
+	}
 
 	addr := fmt.Sprintf(":%d", s.config.HikvisionAlarmPort)
-	s.server = &http.Server{Addr: addr, Handler: mux}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("failed to listen on %s: %v", addr, err)
+	}
 
+	s.listener = listener
+	s.server = &http.Server{Handler: s.Handler()}
+	s.running = true
+	server := s.server
+
+	log.Printf("Hikvision alarm server started on %s", addr)
 	go func() {
-		log.Printf("Hikvision alarm server started on %s", addr)
-		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Printf("Hikvision alarm server error: %v", err)
 		}
 	}()
-
 	return nil
 }
 
+// Stop closes the HTTP server; calling it twice is a no-op.
 func (s *HikvisionAlarmServer) Stop() {
+	s.mu.Lock()
 	if !s.running {
+		s.mu.Unlock()
 		return
 	}
 	s.running = false
-	close(s.stopCh)
-	if s.server != nil {
-		s.server.Close()
+	server := s.server
+	s.server = nil
+	s.mu.Unlock()
+
+	if server != nil {
+		server.Close()
 	}
 	log.Printf("Hikvision alarm server stopped")
 }
 
+// Addr returns the bound address (useful when started on port 0).
+func (s *HikvisionAlarmServer) Addr() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.listener == nil {
+		return ""
+	}
+	return s.listener.Addr().String()
+}
+
+// GetStatus reports server state for the UI.
 func (s *HikvisionAlarmServer) GetStatus() map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return map[string]any{
 		"running": s.running,
 		"port":    s.config.HikvisionAlarmPort,
 	}
 }
 
-func (s *HikvisionAlarmServer) handleAlarm(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Hikvision alarm: %s %s from %s headers=%v", r.Method, r.URL.Path, r.RemoteAddr, r.Header)
+// Handler builds the HTTP routes of the notification endpoint.
+func (s *HikvisionAlarmServer) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/hikvision/alarm", s.handleAlarm)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(io.LimitReader(r.Body, maxHikvisionBody))
+		log.Printf("Hikvision unknown path: %s %s from %s body=%s",
+			r.Method, r.URL.Path, r.RemoteAddr, string(body))
+		http.NotFound(w, r)
+	})
+	return mux
+}
 
+func (s *HikvisionAlarmServer) handleAlarm(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		log.Printf("Hikvision alarm: unexpected %s from %s", r.Method, r.RemoteAddr)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1024*1024))
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxHikvisionBody))
 	if err != nil {
 		log.Printf("Hikvision alarm read error from %s: %v", r.RemoteAddr, err)
 		http.Error(w, "read error", http.StatusBadRequest)
 		return
 	}
-
-	log.Printf("Hikvision alarm body from %s (%d bytes): %s", r.RemoteAddr, len(body), string(body))
 
 	var hEvent HikvisionEvent
 	if err := xml.Unmarshal(body, &hEvent); err != nil {
@@ -110,31 +195,8 @@ func (s *HikvisionAlarmServer) handleAlarm(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	status := "Start"
-	if hEvent.EventState == "inactive" {
-		status = "Stop"
-	}
-
-	eventType := mapHikvisionType(hEvent.EventType)
-
-	event := AlarmEvent{
-		Time:    time.Now(),
-		Camera:  hEvent.ChannelName,
-		Type:    eventType,
-		Event:   hEvent.EventType,
-		Status:  status,
-		Descrip: hEvent.Describe,
-		Address: hEvent.IPAddress,
-	}
-
-	if s.ipMap != nil && event.Address != "" {
-		if name, ok := s.ipMap[event.Address]; ok {
-			event.Camera = name
-		}
-	}
-
-	s.alarm.AddLog(event)
-	s.alarm.SaveEvent(event)
+	event := buildHikvisionEvent(hEvent, s.ipMap, time.Now())
+	s.alarm.Publish(event)
 
 	cameraLog := event.Camera
 	if cameraLog == "" {
@@ -143,65 +205,32 @@ func (s *HikvisionAlarmServer) handleAlarm(w http.ResponseWriter, r *http.Reques
 	log.Printf("Hikvision alarm: camera=%s type=%s event=%s status=%s",
 		cameraLog, event.Type, event.Event, event.Status)
 
-	s.alarm.PublishMQTT(event)
-
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
 }
 
-func mapHikvisionType(hikType string) string {
-	switch hikType {
-	case "VMD", "motionDetection":
-		return "Motion"
-	case "linedetection", "lineDetection":
-		return "LineCross"
-	case "fielddetection", "fieldDetection":
-		return "Intrusion"
-	case "regionEntrance":
-		return "RegionEntrance"
-	case "regionExiting":
-		return "RegionExiting"
-	case "faceDetection":
-		return "Face"
-	case "faceCapture":
-		return "FaceSnap"
-	case "peopleDetection", "group":
-		return "PeopleGather"
-	case "vehicleDetection", "ANPR":
-		return "Vehicle"
-	case "Shelteralarm", "tamperDetection":
-		return "Tamper"
-	case "defocusDetection", "defocus":
-		return "Defocus"
-	case "scenechangedetection":
-		return "SceneChange"
-	case "videoLoss":
-		return "VideoLoss"
-	case "audioDetection", "audioexception":
-		return "Audio"
-	case "diskfull":
-		return "DiskFull"
-	case "diskerror":
-		return "DiskError"
-	case "hdBadBlock":
-		return "HDBadBlock"
-	case "fireDetection":
-		return "Fire"
-	case "smokeDetection":
-		return "Smoke"
-	case "PIR":
-		return "PIR"
-	case "loitering":
-		return "Loitering"
-	case "unattendedBaggage":
-		return "UnattendedBaggage"
-	case "attendedBaggage":
-		return "ObjectRemoval"
-	case "parking":
-		return "Parking"
-	case "rapidMove":
-		return "FastMove"
-	default:
-		return hikType
+// buildHikvisionEvent converts an XML notification into an AlarmEvent,
+// preferring the configured stream name over the device channel name.
+func buildHikvisionEvent(hEvent HikvisionEvent, ipMap map[string]string, now time.Time) AlarmEvent {
+	status := "Start"
+	if hEvent.EventState == "inactive" {
+		status = "Stop"
 	}
+
+	event := AlarmEvent{
+		Time:    now,
+		Camera:  hEvent.ChannelName,
+		Type:    mapHikvisionType(hEvent.EventType),
+		Event:   hEvent.EventType,
+		Status:  status,
+		Descrip: hEvent.Describe,
+		Address: hEvent.IPAddress,
+	}
+
+	if ipMap != nil && event.Address != "" {
+		if name, ok := ipMap[event.Address]; ok {
+			event.Camera = name
+		}
+	}
+	return event
 }

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -23,7 +22,7 @@ import (
 	"simple_nvr/internal/storage"
 )
 
-var version = "2.13.16"
+var version = "2.14.0"
 
 func findStaticDir() string {
 	exe, err := os.Executable()
@@ -53,6 +52,33 @@ func findConfig() string {
 		return filepath.Join(dir, "..", "nvr.yaml")
 	}
 	return "/etc/simple-nvr/nvr.yaml"
+}
+
+// registerUI mounts the index page, static assets and favicon on mux.
+func registerUI(mux *http.ServeMux, staticDir string) {
+	templatePath := filepath.Join(staticDir, "templates", "index.html")
+	staticPath := filepath.Join(staticDir, "static")
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		data, err := os.ReadFile(templatePath)
+		if err != nil {
+			http.Error(w, "template error", http.StatusInternalServerError)
+			return
+		}
+		html := strings.ReplaceAll(string(data), "{{VERSION}}", version)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write([]byte(html))
+	})
+
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticPath))))
+
+	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, filepath.Join(staticPath, "favicon.ico"))
+	})
 }
 
 func main() {
@@ -95,7 +121,22 @@ func main() {
 	logBuffer := logs.NewLogBuffer(1000)
 	logs.RedirectLogOutput(logBuffer)
 	userStore := auth.NewUserStore(cfg.UsersFile)
-	apiSrv := api.NewAPI(cfg, *configPath, rec, stor, alarmSrv, hikvisionAlarm, logBuffer, userStore)
+	if err := userStore.Err(); err != nil {
+		// A corrupt users file must not silently disable authentication.
+		log.Fatalf("Users file: %v", err)
+	}
+
+	apiSrv := api.NewAPI(api.Options{
+		Config:         cfg,
+		ConfigPath:     *configPath,
+		Recorder:       rec,
+		Storage:        stor,
+		Alarm:          alarmSrv,
+		HikvisionAlarm: hikvisionAlarm,
+		LogBuffer:      logBuffer,
+		UserStore:      userStore,
+		Version:        version,
+	})
 
 	alarmSrv.LoadRecentEvents(7)
 
@@ -125,100 +166,9 @@ func main() {
 		os.Exit(0)
 	}()
 
-	templatePath := filepath.Join(*staticDir, "templates", "index.html")
-	staticPath := filepath.Join(*staticDir, "static")
-
 	mux := http.NewServeMux()
-
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		data, err := os.ReadFile(templatePath)
-		if err != nil {
-			http.Error(w, "template error", http.StatusInternalServerError)
-			return
-		}
-		html := strings.ReplaceAll(string(data), "{{VERSION}}", version)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(html))
-	})
-
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticPath))))
-
-	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, filepath.Join(staticPath, "favicon.ico"))
-	})
-
-	mux.HandleFunc("/api/cameras", apiSrv.HandleCameras)
-	mux.HandleFunc("/api/files", apiSrv.HandleFiles)
-	mux.HandleFunc("/api/video/", apiSrv.HandleVideo)
-	mux.HandleFunc("/api/download", apiSrv.HandleVideoDownload)
-	mux.HandleFunc("/api/archive/video/", apiSrv.HandleArchiveVideo)
-	mux.HandleFunc("/api/archive/delete", apiSrv.HandleArchiveDelete)
-	mux.HandleFunc("/api/archive", apiSrv.HandleArchive)
-	mux.HandleFunc("/api/status", apiSrv.HandleStatus)
-	mux.HandleFunc("/api/storage/cameras", apiSrv.HandleCamerasStorage)
-	mux.HandleFunc("/api/record/start", apiSrv.HandleRecordStart)
-	mux.HandleFunc("/api/record/stop", apiSrv.HandleRecordStop)
-	mux.HandleFunc("/api/config", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			apiSrv.HandleGetConfig(w, r)
-		case http.MethodPost:
-			apiSrv.HandleSaveConfig(w, r)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-
-	mux.HandleFunc("/api/alarm/status", apiSrv.HandleAlarmStatus)
-	mux.HandleFunc("/api/alarm/start", apiSrv.HandleAlarmStart)
-	mux.HandleFunc("/api/alarm/stop", apiSrv.HandleAlarmStop)
-	mux.HandleFunc("/api/alarm/log", apiSrv.HandleAlarmLog)
-	mux.HandleFunc("/api/alarm/clear", apiSrv.HandleAlarmClear)
-	mux.HandleFunc("/api/alarms/range", apiSrv.HandleAlarmsRange)
-
-	mux.HandleFunc("/api/hikvision/start", apiSrv.HandleHikvisionAlarmStart)
-	mux.HandleFunc("/api/hikvision/stop", apiSrv.HandleHikvisionAlarmStop)
-
-	mux.HandleFunc("/api/go2rtc/status", apiSrv.HandleGo2RTCStatus)
-	mux.HandleFunc("/api/go2rtc/restart", apiSrv.HandleGo2RTCRestart)
-	mux.HandleFunc("/api/go2rtc/update", apiSrv.HandleGo2RTCUpdate)
-	mux.HandleFunc("/api/go2rtc/install", apiSrv.HandleGo2RTCInstall)
-	mux.HandleFunc("/api/go2rtc/cameras", apiSrv.HandleGo2RTCCameras)
-	mux.HandleFunc("/api/go2rtc/reorder", apiSrv.HandleGo2RTCReorder)
-
-	mux.HandleFunc("/api/logs", apiSrv.HandleLogs)
-	mux.HandleFunc("/api/logs/clear", apiSrv.HandleLogsClear)
-
-	mux.HandleFunc("/api/tools/scan", apiSrv.HandleToolsScanStart)
-	mux.HandleFunc("/api/tools/scan/status", apiSrv.HandleToolsScanStatus)
-	mux.HandleFunc("/api/tools/repair", apiSrv.HandleToolsRepair)
-
-	mux.HandleFunc("/api/auth/login", apiSrv.HandleLogin)
-	mux.HandleFunc("/api/auth/logout", apiSrv.HandleLogout)
-	mux.HandleFunc("/api/auth/me", apiSrv.HandleMe)
-	mux.HandleFunc("/api/auth/check", apiSrv.HandleAuthCheck)
-	mux.HandleFunc("/api/users", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			auth.RequireAdmin(apiSrv.HandleGetUsers)(w, r)
-		case http.MethodPost:
-			apiSrv.HandleAddUser(w, r)
-		case http.MethodDelete:
-			auth.RequireAdmin(apiSrv.HandleDeleteUser)(w, r)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-	mux.HandleFunc("/api/users/change-password", apiSrv.HandleChangePassword)
-
-	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"version": version})
-	})
+	registerUI(mux, *staticDir)
+	apiSrv.RegisterRoutes(mux)
 
 	addr := fmt.Sprintf(":%d", cfg.HTTPPort)
 	log.Printf("Server starting on %s", addr)
@@ -233,25 +183,27 @@ func main() {
 	log.Fatal(http.ListenAndServe(addr, userStore.RequireAuth(mux)))
 }
 
+// nextCycleTick returns the next 10-minute mark at or after now.
+func nextCycleTick(now time.Time) time.Time {
+	nextMinute := ((now.Minute() / 10) + 1) * 10
+	if nextMinute >= 60 {
+		return time.Date(now.Year(), now.Month(), now.Day(), now.Hour()+1, 0, 0, 0, now.Location())
+	}
+	return time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), nextMinute, 0, 0, now.Location())
+}
+
 func startScheduler(rec *recorder.Recorder) {
 	now := time.Now()
-	minute := now.Minute()
-	second := now.Second()
-	nextInterval := ((minute / 10) + 1) * 10
-	remaining := (nextInterval - minute) * 60 - second
+	nextTick := nextCycleTick(now)
+	// Whole seconds until the tick, matching the historic formula.
+	remaining := int(nextTick.Sub(now).Round(time.Second).Seconds())
 
-	log.Printf("First recording now: %ds until :%02d:00 (+7s overlap)", remaining, nextInterval%60)
+	log.Printf("First recording now: %ds until %s (+7s overlap)", remaining, nextTick.Format("15:04:00"))
 	rec.StartRecording(remaining + 7)
 
 	for {
 		now := time.Now()
-		nextMinute := ((now.Minute() / 10) + 1) * 10
-		var nextTick time.Time
-		if nextMinute >= 60 {
-			nextTick = time.Date(now.Year(), now.Month(), now.Day(), now.Hour()+1, 0, 0, 0, now.Location())
-		} else {
-			nextTick = time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), nextMinute, 0, 0, now.Location())
-		}
+		nextTick := nextCycleTick(now)
 		log.Printf("Next recording cycle at %s (in %v)", nextTick.Format("15:04:05"), nextTick.Sub(now).Round(time.Second))
 		time.Sleep(nextTick.Sub(now))
 

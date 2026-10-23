@@ -11,66 +11,81 @@ import (
 )
 
 func (a *API) HandleGetConfig(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(a.config)
+	writeJSON(w, http.StatusOK, a.config)
 }
 
 func (a *API) HandleSaveConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	if !requireAdminRole(r) {
-		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
 	var cfg config.NVRConfig
 	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
-		http.Error(w, "invalid json", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
 
-	a.config.BaseDir = cfg.BaseDir
-	a.config.ArchiveDir = cfg.ArchiveDir
-	a.config.StreamServer = cfg.StreamServer
-	a.config.DefaultCameraLimitGB = cfg.DefaultCameraLimitGB
-	a.config.GlobalSizeGB = cfg.GlobalSizeGB
-	a.config.Go2RTCConfigPath = cfg.Go2RTCConfigPath
-	if cfg.HTTPPort > 0 {
-		a.config.HTTPPort = cfg.HTTPPort
-	}
-	a.config.AlarmEnabled = cfg.AlarmEnabled
-	if cfg.AlarmPort > 0 {
-		a.config.AlarmPort = cfg.AlarmPort
-	}
-	a.config.MQTTHost = cfg.MQTTHost
-	if cfg.MQTTPort > 0 {
-		a.config.MQTTPort = cfg.MQTTPort
-	}
-	a.config.MQTTUser = cfg.MQTTUser
-	a.config.MQTTPass = cfg.MQTTPass
-	a.config.AlarmCommand = cfg.AlarmCommand
-	if cfg.CameraLimits != nil {
-		a.config.CameraLimits = cfg.CameraLimits
-	}
-	if cfg.CameraDayLimits != nil {
-		a.config.CameraDayLimits = cfg.CameraDayLimits
-	}
-	a.config.KioskEnabled = cfg.KioskEnabled
-	if cfg.KioskPort > 0 {
-		a.config.KioskPort = cfg.KioskPort
-	}
+	applyConfig(&cfg, a.config)
 
 	if err := config.SaveNVRConfig(a.configPath, a.config); err != nil {
 		log.Printf("Error saving config: %v", err)
-		http.Error(w, "save error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "save error")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	writeStatus(w, "ok")
+}
+
+// saveConfigQuietly persists the config, logging (but not failing) on error;
+// used by state toggles where the operation already succeeded.
+func saveConfigQuietly(path string, cfg *config.NVRConfig) {
+	if err := config.SaveNVRConfig(path, cfg); err != nil {
+		log.Printf("warning: save nvr config: %v", err)
+	}
+}
+
+// applyConfig copies the editable settings from src into dst. Zero values
+// never clobber live port numbers (a partially filled form must not stop the
+// server); maps are only replaced when the request carries them.
+func applyConfig(src, dst *config.NVRConfig) {
+	dst.BaseDir = src.BaseDir
+	dst.ArchiveDir = src.ArchiveDir
+	dst.StreamServer = src.StreamServer
+	dst.DefaultCameraLimitGB = src.DefaultCameraLimitGB
+	dst.GlobalSizeGB = src.GlobalSizeGB
+	dst.Go2RTCConfigPath = src.Go2RTCConfigPath
+	if src.HTTPPort > 0 {
+		dst.HTTPPort = src.HTTPPort
+	}
+	dst.AlarmEnabled = src.AlarmEnabled
+	if src.AlarmPort > 0 {
+		dst.AlarmPort = src.AlarmPort
+	}
+	dst.MQTTHost = src.MQTTHost
+	if src.MQTTPort > 0 {
+		dst.MQTTPort = src.MQTTPort
+	}
+	dst.MQTTUser = src.MQTTUser
+	dst.MQTTPass = src.MQTTPass
+	dst.AlarmCommand = src.AlarmCommand
+	if src.CameraLimits != nil {
+		dst.CameraLimits = src.CameraLimits
+	}
+	if src.CameraDayLimits != nil {
+		dst.CameraDayLimits = src.CameraDayLimits
+	}
+	dst.KioskEnabled = src.KioskEnabled
+	if src.KioskPort > 0 {
+		dst.KioskPort = src.KioskPort
+	}
+	// Hikvision settings are managed exclusively through the alarm
+	// start/stop endpoints and are deliberately left untouched here.
 }
 
 func (a *API) HandleStatus(w http.ResponseWriter, r *http.Request) {
@@ -93,52 +108,46 @@ func (a *API) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(status)
+	writeJSON(w, http.StatusOK, status)
 }
 
 func (a *API) HandleCamerasStorage(w http.ResponseWriter, r *http.Request) {
-	data := a.storage.GetCamerasStorage()
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(data)
+	writeJSON(w, http.StatusOK, a.storage.GetCamerasStorage())
 }
 
 func (a *API) HandleRecordStart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	if !requireAdminRole(r) {
-		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
 	if a.recorder.IsRecording() {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "already recording"})
+		writeStatus(w, "already recording")
 		return
 	}
 
 	go a.recorder.StartRecording()
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "started"})
+	writeStatus(w, "started")
 }
 
 func (a *API) HandleRecordStop(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	if !requireAdminRole(r) {
-		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
 	a.recorder.StopRecording()
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "stopped"})
+	writeStatus(w, "stopped")
 }

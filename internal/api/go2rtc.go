@@ -8,18 +8,55 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
 
+// Paths the self-update machinery writes to. Variables so tests can point
+// them into a temp dir.
+var (
+	go2rtcBinaryPath = "/usr/bin/go2rtc"
+	systemdUnitPath  = "/etc/systemd/system/go2rtc.service"
+)
+
+// githubLatestRelease fetches the newest go2rtc release metadata. Variable so
+// tests do not hit the network.
+var githubLatestRelease = func() (version, downloadURL string, ok bool) {
+	resp, err := http.Get("https://api.github.com/repos/AlexxIT/go2rtc/releases/latest")
+	if err != nil {
+		return "", "", false
+	}
+	defer resp.Body.Close()
+
+	var release struct {
+		TagName string `json:"tag_name"`
+		Assets  []struct {
+			Name               string `json:"name"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&release) != nil {
+		return "", "", false
+	}
+
+	binaryName := "go2rtc_linux_" + runtime.GOARCH
+	for _, asset := range release.Assets {
+		if asset.Name == binaryName {
+			return strings.TrimPrefix(release.TagName, "v"), asset.BrowserDownloadURL, true
+		}
+	}
+	return strings.TrimPrefix(release.TagName, "v"), "", true
+}
+
 func (a *API) HandleGo2RTCStatus(w http.ResponseWriter, r *http.Request) {
 	if !requireAdminRole(r) {
-		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
 	binaryExists := false
-	if _, err := os.Stat("/usr/bin/go2rtc"); err == nil {
+	if _, err := os.Stat(go2rtcBinaryPath); err == nil {
 		binaryExists = true
 	}
 
@@ -35,21 +72,14 @@ func (a *API) HandleGo2RTCStatus(w http.ResponseWriter, r *http.Request) {
 		if err == nil && strings.TrimSpace(string(out)) == "active" {
 			status["running"] = true
 		}
-	}
 
-	if binaryExists {
-		resp, err := http.Get(a.go2rtcAPIBase() + "/api")
-		if err == nil {
-			defer resp.Body.Close()
-			var go2rtcInfo map[string]any
-			if json.NewDecoder(resp.Body).Decode(&go2rtcInfo) == nil {
-				if v, ok := go2rtcInfo["version"].(string); ok {
-					status["version"] = v
-				}
-				if rtsp, ok := go2rtcInfo["rtsp"].(map[string]any); ok {
-					if listen, ok := rtsp["listen"].(string); ok {
-						status["rtsp_listen"] = listen
-					}
+		if info, err := a.go2rtc.Info(); err == nil {
+			if v, ok := info["version"].(string); ok {
+				status["version"] = v
+			}
+			if rtsp, ok := info["rtsp"].(map[string]any); ok {
+				if listen, ok := rtsp["listen"].(string); ok {
+					status["rtsp_listen"] = listen
 				}
 			}
 		}
@@ -61,48 +91,79 @@ func (a *API) HandleGo2RTCStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ghResp, err := http.Get("https://api.github.com/repos/AlexxIT/go2rtc/releases/latest")
-	if err == nil {
-		defer ghResp.Body.Close()
-		var release struct {
-			TagName string `json:"tag_name"`
-			Assets  []struct {
-				Name               string `json:"name"`
-				BrowserDownloadURL string `json:"browser_download_url"`
-			} `json:"assets"`
-		}
-		if json.NewDecoder(ghResp.Body).Decode(&release) == nil {
-			latestVersion := strings.TrimPrefix(release.TagName, "v")
-			currentVersion := status["version"].(string)
-			status["latest_version"] = latestVersion
-
-			arch := runtime.GOARCH
-			binaryName := "go2rtc_linux_" + arch
-			for _, asset := range release.Assets {
-				if asset.Name == binaryName {
-					if !binaryExists {
-						status["install_url"] = asset.BrowserDownloadURL
-					}
-					status["update_url"] = asset.BrowserDownloadURL
-					break
-				}
+	if latestVersion, downloadURL, ok := githubLatestRelease(); ok {
+		status["latest_version"] = latestVersion
+		if downloadURL != "" {
+			if !binaryExists {
+				status["install_url"] = downloadURL
 			}
-
-			status["update_available"] = latestVersion != "" && currentVersion != "" && latestVersion != currentVersion
+			status["update_url"] = downloadURL
 		}
+		currentVersion := status["version"].(string)
+		status["update_available"] = latestVersion != "" && currentVersion != "" && latestVersion != currentVersion
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(status)
+	writeJSON(w, http.StatusOK, status)
+}
+
+// downloadTo fetches url and writes it to dest with mode 0755 via a temp file.
+func downloadTo(url, dest string) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return fmt.Errorf("download failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download returned %d", resp.StatusCode)
+	}
+
+	tmpPath := dest + ".tmp"
+	f, err := os.Create(tmpPath)
+	if err != nil {
+		return fmt.Errorf("create temp: %w", err)
+	}
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		f.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("write temp: %w", err)
+	}
+	f.Close()
+	os.Chmod(tmpPath, 0755)
+
+	if err := os.Rename(tmpPath, dest); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("install binary: %w", err)
+	}
+	return nil
+}
+
+// ensureGo2RTCCreate creates an empty go2rtc config when none exists.
+func (a *API) ensureGo2RTCCreate() string {
+	configPath := a.config.Go2RTCConfigPath
+	if configPath == "" {
+		configPath = "/etc/go2rtc/go2rtc.yaml"
+	}
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+			log.Printf("go2rtc install: mkdir: %v", err)
+		}
+		if err := os.WriteFile(configPath, []byte("streams: {}\n"), 0644); err != nil {
+			log.Printf("go2rtc install: create config: %v", err)
+		} else {
+			log.Printf("go2rtc install: created empty config %s", configPath)
+		}
+	}
+	return configPath
 }
 
 func (a *API) HandleGo2RTCInstall(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if !requireAdminRole(r) {
-		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
@@ -110,57 +171,16 @@ func (a *API) HandleGo2RTCInstall(w http.ResponseWriter, r *http.Request) {
 		URL string `json:"url"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.URL == "" {
-		http.Error(w, `{"error":"url required"}`, http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "url required")
 		return
 	}
 
 	log.Printf("go2rtc install: downloading %s", req.URL)
 
-	httpResp, err := http.Get(req.URL)
-	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"download failed: %s"}`, err.Error()), http.StatusInternalServerError)
-		return
-	}
-	defer httpResp.Body.Close()
+	configPath := a.ensureGo2RTCCreate()
 
-	if httpResp.StatusCode != 200 {
-		http.Error(w, fmt.Sprintf(`{"error":"download returned %d"}`, httpResp.StatusCode), http.StatusInternalServerError)
-		return
-	}
-
-	if err := os.MkdirAll("/etc/go2rtc", 0755); err != nil {
-		log.Printf("go2rtc install: mkdir /etc/go2rtc: %v", err)
-	}
-
-	configPath := a.config.Go2RTCConfigPath
-	if configPath == "" {
-		configPath = "/etc/go2rtc/go2rtc.yaml"
-	}
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		if err := os.WriteFile(configPath, []byte("streams: {}\n"), 0644); err != nil {
-			log.Printf("go2rtc install: create config: %v", err)
-		} else {
-			log.Printf("go2rtc install: created empty config %s", configPath)
-		}
-	}
-
-	tmpPath := "/usr/bin/go2rtc.tmp"
-	f, err := os.Create(tmpPath)
-	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"create temp: %s"}`, err.Error()), http.StatusInternalServerError)
-		return
-	}
-	if _, err := io.Copy(f, httpResp.Body); err != nil {
-		f.Close()
-		os.Remove(tmpPath)
-		http.Error(w, fmt.Sprintf(`{"error":"write temp: %s"}`, err.Error()), http.StatusInternalServerError)
-		return
-	}
-	f.Close()
-	os.Chmod(tmpPath, 0755)
-
-	if err := os.Rename(tmpPath, "/usr/bin/go2rtc"); err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"install binary: %s"}`, err.Error()), http.StatusInternalServerError)
+	if err := downloadTo(req.URL, go2rtcBinaryPath); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -169,13 +189,13 @@ Description=go2rtc
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/go2rtc -config ` + configPath + `
+ExecStart=` + go2rtcBinaryPath + ` -config ` + configPath + `
 Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
 `
-	if err := os.WriteFile("/etc/systemd/system/go2rtc.service", []byte(systemdUnit), 0644); err != nil {
+	if err := os.WriteFile(systemdUnitPath, []byte(systemdUnit), 0644); err != nil {
 		log.Printf("go2rtc install: write systemd unit: %v", err)
 	}
 
@@ -184,37 +204,35 @@ WantedBy=multi-user.target
 	exec.Command("systemctl", "start", "go2rtc").Run()
 
 	log.Printf("go2rtc installed successfully")
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "installed"})
+	writeStatus(w, "installed")
 }
 
 func (a *API) HandleGo2RTCRestart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if !requireAdminRole(r) {
-		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
-	if err := a.restartGo2RTC(); err != nil {
+	if err := a.go2rtc.Restart(); err != nil {
 		log.Printf("go2rtc restart error: %v", err)
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "restarted"})
+	writeStatus(w, "restarted")
 }
 
 func (a *API) HandleGo2RTCUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if !requireAdminRole(r) {
-		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
@@ -222,43 +240,16 @@ func (a *API) HandleGo2RTCUpdate(w http.ResponseWriter, r *http.Request) {
 		URL string `json:"url"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.URL == "" {
-		http.Error(w, `{"error":"url required"}`, http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "url required")
 		return
 	}
 
 	log.Printf("go2rtc update: downloading %s", req.URL)
 
-	httpResp, err := http.Get(req.URL)
-	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"download failed: %s"}`, err.Error()), http.StatusInternalServerError)
-		return
-	}
-	defer httpResp.Body.Close()
-
-	if httpResp.StatusCode != 200 {
-		http.Error(w, fmt.Sprintf(`{"error":"download returned %d"}`, httpResp.StatusCode), http.StatusInternalServerError)
-		return
-	}
-
-	tmpPath := "/usr/bin/go2rtc.tmp"
-	f, err := os.Create(tmpPath)
-	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"create temp: %s"}`, err.Error()), http.StatusInternalServerError)
-		return
-	}
-	if _, err := io.Copy(f, httpResp.Body); err != nil {
-		f.Close()
-		os.Remove(tmpPath)
-		http.Error(w, fmt.Sprintf(`{"error":"write temp: %s"}`, err.Error()), http.StatusInternalServerError)
-		return
-	}
-	f.Close()
-	os.Chmod(tmpPath, 0755)
-
 	exec.Command("systemctl", "stop", "go2rtc").Run()
 
-	if err := os.Rename(tmpPath, "/usr/bin/go2rtc"); err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"replace binary: %s"}`, err.Error()), http.StatusInternalServerError)
+	if err := downloadTo(req.URL, go2rtcBinaryPath); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		exec.Command("systemctl", "start", "go2rtc").Run()
 		return
 	}
@@ -266,6 +257,5 @@ func (a *API) HandleGo2RTCUpdate(w http.ResponseWriter, r *http.Request) {
 	exec.Command("systemctl", "start", "go2rtc").Run()
 
 	log.Printf("go2rtc updated successfully")
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+	writeStatus(w, "updated")
 }

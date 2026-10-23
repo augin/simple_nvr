@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 )
@@ -16,24 +15,21 @@ func (a *API) HandleLogs(w http.ResponseWriter, r *http.Request) {
 	since := r.URL.Query().Get("since")
 	level := r.URL.Query().Get("level")
 
-	logs := a.logBuffer.GetLogs(limit, since, level)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(logs)
+	writeJSON(w, http.StatusOK, a.logBuffer.GetLogs(limit, since, level))
 }
 
 func (a *API) HandleLogsClear(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	if !requireAdminRole(r) {
-		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
 	a.logBuffer.Clear()
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "cleared"})
+	writeStatus(w, "cleared")
 }

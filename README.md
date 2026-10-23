@@ -70,10 +70,11 @@ go build -o nvr .
 ### Структура проекта
 
 ```
-main.go                          точка входа, HTTP-маршруты, планировщик
+main.go                          точка входа, регистрация UI, планировщик
+main_test.go                     тесты расписания, UI-роутинга
 internal/
   config/config.go               NVRConfig, Go2RTCConfig, загрузка/сохранение/валидация
-  auth/auth.go                   UserStore, сессии, роли, RequireAuth
+  auth/auth.go                   UserStore, сессии, роли, RequireAuth, WithIdentity
   logs/logs.go                   LogBuffer, кольцевой буфер логов
   recorder/recorder.go           Recorder, StreamInfo, GracefulStop, healthCheck, staggered start
   storage/storage.go             Storage, лимиты диска, очистка
@@ -81,21 +82,26 @@ internal/
     alarm.go                     AlarmServer (Dahua/XM), MQTT, TCP
     hikvision.go                 HikvisionAlarmServer, XML-парсинг
     common.go                    константы, getString, ReadEventsFile
+    events.go                    AlarmEvent, журнал событий (EventDir)
+  go2rtc/go2rtc.go               общий клиент go2rtc: Info/Restart, парсинг URL камер, BuildURL
   recovery/
     recovery.go                  RecoverWithFFmpeg, tryFFmpegMovRepair
     nal_parser.go                NAL-парсинг H.264/HEVC, SPS/PPS/VPS
+    stream_info.go               разбор MP4-контейнера, decodeBase64, SPS/PPS из SDP
   kiosk/kiosk.go                 KioskServer (reverse proxy), {{VERSION}} replacement
   api/
-    api.go                       ядро API, requireAdminRole, go2rtcAPIBase
+    api.go                       ядро API (Options, RegisterRoutes), requireAdminRole
     cameras.go                   CRUD камер, go2rtc reorder
     files.go                     listMP4Files, просмотр записей, обрезка
     archive.go                   архив обрезанных клипов
     config.go                    настройки, статус, record start/stop
     alarm.go                     API тревог (Dahua + Hikvision)
     go2rtc.go                    установка/обновление/restart go2rtc
-    tools.go                     сканер записей, восстановление
+    scanner.go                   сканер записей (scanState, runScan, collectMP4s)
+    tools.go                     pathUnderBase, восстановление
     users.go                     управление пользователями, авторизация
     logs.go                      API системных логов
+  *_test.go                      пакетные тесты (включая -race)
 ```
 
 ### Конфигурация
@@ -287,6 +293,8 @@ docker run -d \
 
 | Метод | Путь | Доступ | Описание |
 |-------|------|--------|----------|
+| POST | `/api/tools/scan` | Admin | Запуск проверки записей ffprobe |
+| GET | `/api/tools/scan/status` | Admin | Прогресс и список битых файлов |
 | POST | `/api/tools/repair` | Admin | Восстановление повреждённого MP4 (body: {path}) |
 | POST | `/api/record/start` | Admin | Начать запись |
 | POST | `/api/record/stop` | Admin | Остановить запись |
@@ -366,6 +374,24 @@ docker run -d \
 - Зум: скролл мыши (до 10x)
 - Панорамирование: drag при зуме
 - Сброс зума: двойной клик
+
+## Тестирование
+
+```bash
+go test -race ./...
+```
+
+Тесты покрывают конфиг, авторизацию, логи, recorder, recovery (включая E2E-восстановление через ffmpeg), kiosk, go2rtc-клиент, storage, alarm и все HTTP-обработчики API. Тесты API поднимают реальный `httptest`-сервер и инъецируют identity через `auth.WithIdentity` — роутинг, валидация путей и авторизация проверяются целиком.
+
+Тесты, которым нужен `ffprobe`/`ffmpeg`, автоматически пропускаются, если бинарников нет в `PATH`.
+
+## Безопасность
+
+- **Path traversal**: все пути к записям/архиву собираются через `safeJoin`, которая отклоняет сегменты `""`, `.`, `..`, path-разделитель и NUL, а затем проверяет результат относительно базовой директории. Инструмент восстановления дополнительно использует `pathUnderBase` с `filepath.EvalSymlinks` — симлинки и sibling-директории с общим префиксом (`/baseevil` для `/base`) отклоняются.
+- **Параметры даты** (`/api/alarms/range`) валидируются через `time.Parse("2006-01-02")` и не попадают в файловые пути сырыми.
+- **Смена пароля**: не-админ может сменить только собственный пароль и только со старым паролем; первый пользователь автоматически становится админом.
+- **Битый users.json** приводит к `log.Fatalf` при старте — аутентификация не отключается молча.
+- **Kiosk-режим** — отдельный HTTP-сервер без собственной аутентификации, проксирует запросы на основной сервер (loopback) с ролью `user`.
 
 ## Лицензия
 

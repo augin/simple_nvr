@@ -1,7 +1,9 @@
+// Package alarm implements the alarm event pipeline: a TCP server for
+// Dahua/XM devices, an HTTP endpoint for Hikvision ISAPI notifications, an
+// in-memory event log, daily journals on disk and optional MQTT publishing.
 package alarm
 
 import (
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,9 +11,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -20,38 +19,52 @@ import (
 	"simple_nvr/internal/config"
 )
 
-type AlarmEvent struct {
-	Time     time.Time `json:"time"`
-	Camera   string    `json:"camera"`
-	SerialID string    `json:"serial_id"`
-	Type     string    `json:"type"`
-	Event    string    `json:"event"`
-	Channel  int       `json:"channel"`
-	Status   string    `json:"status"`
-	Descrip  string    `json:"descrip"`
-	Address  string    `json:"address"`
-}
-
+// AlarmServer accepts events from Dahua/XM devices over TCP.
 type AlarmServer struct {
-	config   *config.NVRConfig
-	ipMap    map[string]string
+	config *config.NVRConfig
+	ipMap  map[string]string
+
 	mu       sync.Mutex
 	log      []AlarmEvent
 	running  bool
 	listener net.Listener
 	mqtt     mqtt.Client
 	stopCh   chan struct{}
+
+	// dir stores daily journals; defaults to AlarmDir (see SetEventDir).
+	dir string
+	// fileMu serialises appends to the journal files.
+	fileMu sync.Mutex
 }
 
+// NewAlarmServer creates a stopped server; call Start to begin listening.
 func NewAlarmServer(cfg *config.NVRConfig, ipMap map[string]string) *AlarmServer {
 	return &AlarmServer{
 		config: cfg,
 		ipMap:  ipMap,
 		log:    make([]AlarmEvent, 0, MaxAlarmLog),
 		stopCh: make(chan struct{}),
+		dir:    AlarmDir,
 	}
 }
 
+// SetEventDir overrides the journal directory (used by tests and packagers).
+// It must be called before Start.
+func (s *AlarmServer) SetEventDir(dir string) {
+	s.fileMu.Lock()
+	defer s.fileMu.Unlock()
+	s.dir = dir
+}
+
+// EventDir returns the directory with daily event journals.
+func (s *AlarmServer) EventDir() string {
+	s.fileMu.Lock()
+	defer s.fileMu.Unlock()
+	return s.dir
+}
+
+// Start begins listening on alarm_port; it fails when already running or when
+// the port cannot be bound.
 func (s *AlarmServer) Start() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -59,31 +72,32 @@ func (s *AlarmServer) Start() error {
 	if s.running {
 		return fmt.Errorf("alarm server already running")
 	}
-
-	if err := os.MkdirAll(AlarmDir, 0755); err != nil {
+	if err := os.MkdirAll(s.EventDir(), permissionsDir); err != nil {
 		return fmt.Errorf("failed to create alarm dir: %v", err)
 	}
 
 	addr := fmt.Sprintf(":%d", s.config.AlarmPort)
-	var err error
-	s.listener, err = net.Listen("tcp", addr)
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %v", addr, err)
 	}
 
-	s.running = true
+	s.listener = listener
 	s.stopCh = make(chan struct{})
+	s.running = true
 
 	if s.config.MQTTHost != "" {
 		s.connectMQTT()
 	}
 
-	go s.acceptLoop()
-	go s.cleanupLoop()
+	go s.acceptLoop(listener, s.stopCh)
+	go s.cleanupLoop(s.stopCh)
+
 	log.Printf("Alarm server started on %s", addr)
 	return nil
 }
 
+// Stop shuts the server down; calling it on a stopped server is a no-op.
 func (s *AlarmServer) Stop() {
 	s.mu.Lock()
 	if !s.running {
@@ -92,33 +106,39 @@ func (s *AlarmServer) Stop() {
 	}
 	s.running = false
 	close(s.stopCh)
-	s.listener.Close()
-	if s.mqtt != nil && s.mqtt.IsConnected() {
-		s.mqtt.Disconnect(250)
-		s.mqtt = nil
-	}
+	listener := s.listener
+	client := s.mqtt
+	s.mqtt = nil
 	s.mu.Unlock()
+
+	if listener != nil {
+		listener.Close()
+	}
+	if client != nil && client.IsConnected() {
+		client.Disconnect(250)
+	}
 	log.Printf("Alarm server stopped")
 }
 
-func (s *AlarmServer) acceptLoop() {
+func (s *AlarmServer) acceptLoop(listener net.Listener, stopCh <-chan struct{}) {
 	for {
-		conn, err := s.listener.Accept()
+		conn, err := listener.Accept()
 		if err != nil {
-			s.mu.Lock()
-			running := s.running
-			s.mu.Unlock()
-			if !running {
+			select {
+			case <-stopCh:
 				return
+			default:
 			}
 			log.Printf("Alarm accept error: %v", err)
 			continue
 		}
-		go s.handleClient(conn)
+		go s.handleClient(conn, stopCh)
 	}
 }
 
-func (s *AlarmServer) handleClient(conn net.Conn) {
+// handleClient reads frames from a single device connection until it closes
+// or the server stops.
+func (s *AlarmServer) handleClient(conn net.Conn, stopCh <-chan struct{}) {
 	defer conn.Close()
 
 	addr := conn.RemoteAddr().String()
@@ -126,174 +146,59 @@ func (s *AlarmServer) handleClient(conn net.Conn) {
 
 	for {
 		select {
-		case <-s.stopCh:
+		case <-stopCh:
 			return
 		default:
 		}
 
 		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 
-		header := make([]byte, 20)
-		if _, err := io.ReadFull(conn, header); err != nil {
-			if err != io.EOF {
-				log.Printf("Alarm read header error from %s: %v", addr, err)
-			}
-			return
-		}
-
-		contentLen := binary.LittleEndian.Uint32(header[16:20])
-		if contentLen > 1024*1024 {
-			log.Printf("Alarm payload too large from %s: %d bytes", addr, contentLen)
-			return
-		}
-
-		payload := make([]byte, contentLen)
-		if _, err := io.ReadFull(conn, payload); err != nil {
-			log.Printf("Alarm read payload error from %s: %v", addr, err)
-			return
-		}
-
-		var rawData map[string]any
-		if err := json.Unmarshal(payload, &rawData); err != nil {
-			log.Printf("Alarm JSON parse error from %s: %v", addr, err)
-			continue
-		}
-
-		event := AlarmEvent{
-			Time:     time.Now(),
-			SerialID: getString(rawData, "SerialID"),
-			Type:     getString(rawData, "Type"),
-			Event:    getString(rawData, "Event"),
-			Channel:  getInt(rawData, "Channel"),
-			Status:   getString(rawData, "Status"),
-			Descrip:  getString(rawData, "Descrip"),
-			Address:  decodeAddress(rawData["Address"]),
-		}
-
-		if s.ipMap != nil {
-			event.Camera = s.ipMap[event.Address]
-		}
-
-		s.AddLog(event)
-		s.SaveEvent(event)
-
-		cameraLog := event.Camera
-		if cameraLog == "" {
-			cameraLog = event.Address
-		}
-		log.Printf("Alarm event: camera=%s serial=%s type=%s event=%s status=%s",
-			cameraLog, event.SerialID, event.Type, event.Event, event.Status)
-
-		s.PublishMQTT(event)
-
-		if s.config.AlarmCommand != "" && event.Status == "Start" {
-			go s.runCommand(event)
-		}
-	}
-}
-
-func (s *AlarmServer) AddLog(event AlarmEvent) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.log = append(s.log, event)
-	if len(s.log) > MaxAlarmLog {
-		s.log = s.log[len(s.log)-MaxAlarmLog:]
-	}
-}
-
-func (s *AlarmServer) SaveEvent(event AlarmEvent) {
-	fileName := event.Time.Format("2006-01-02") + ".jsonl"
-	filePath := filepath.Join(AlarmDir, fileName)
-
-	data, err := json.Marshal(event)
-	if err != nil {
-		log.Printf("Alarm marshal error: %v", err)
-		return
-	}
-
-	f, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Printf("Alarm file open error: %v", err)
-		return
-	}
-	defer f.Close()
-
-	if _, err := f.Write(data); err != nil {
-		log.Printf("Alarm file write error: %v", err)
-		return
-	}
-	f.WriteString("\n")
-}
-
-func (s *AlarmServer) loadRecentEvents(days int) {
-	now := time.Now()
-	for i := days - 1; i >= 0; i-- {
-		date := now.AddDate(0, 0, -i)
-		fileName := date.Format("2006-01-02") + ".jsonl"
-		filePath := filepath.Join(AlarmDir, fileName)
-
-		events, err := ReadEventsFile(filePath)
+		payload, err := readDahuaFrame(conn)
 		if err != nil {
-			continue
-		}
-
-		for _, e := range events {
-			s.log = append(s.log, e)
-		}
-	}
-
-	if len(s.log) > MaxAlarmLog {
-		s.log = s.log[len(s.log)-MaxAlarmLog:]
-	}
-}
-
-func (s *AlarmServer) cleanupOldEvents() {
-	threshold := time.Now().AddDate(0, 0, -RetentionDays)
-	thresholdStr := threshold.Format("2006-01-02")
-
-	entries, err := os.ReadDir(AlarmDir)
-	if err != nil {
-		return
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
-			continue
-		}
-		dateStr := strings.TrimSuffix(entry.Name(), ".jsonl")
-		if dateStr < thresholdStr {
-			if err := os.Remove(filepath.Join(AlarmDir, entry.Name())); err != nil {
-				log.Printf("Alarm cleanup error removing %s: %v", entry.Name(), err)
-			} else {
-				log.Printf("Alarm: cleaned up old log %s", entry.Name())
+			if err != io.EOF && !isTimeout(err) {
+				log.Printf("Alarm read error from %s: %v", addr, err)
 			}
-		}
-	}
-}
-
-func (s *AlarmServer) cleanupLoop() {
-	ticker := time.NewTicker(1 * time.Hour)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-s.stopCh:
 			return
-		case <-ticker.C:
-			s.cleanupOldEvents()
 		}
+
+		event, err := parseDahuaPayload(payload, s.ipMap)
+		if err != nil {
+			log.Printf("Alarm parse error from %s: %v", addr, err)
+			continue
+		}
+
+		s.recordEvent(event)
 	}
 }
 
+// recordEvent stores, journals, publishes and logs a single device event.
+func (s *AlarmServer) recordEvent(event AlarmEvent) {
+	event.Time = time.Now()
+	s.Publish(event)
+
+	cameraLog := event.Camera
+	if cameraLog == "" {
+		cameraLog = event.Address
+	}
+	log.Printf("Alarm event: camera=%s serial=%s type=%s event=%s status=%s",
+		cameraLog, event.SerialID, event.Type, event.Event, event.Status)
+
+	if s.config.AlarmCommand != "" && event.Status == "Start" {
+		go s.runCommand(event)
+	}
+}
+
+func isTimeout(err error) bool {
+	ne, ok := err.(net.Error)
+	return ok && ne.Timeout()
+}
+
+// GetStatus reports server state for the UI.
 func (s *AlarmServer) GetStatus() map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	mqttConnected := false
-	if s.mqtt != nil {
-		mqttConnected = s.mqtt.IsConnected()
-	}
+	mqttConnected := s.mqtt != nil && s.mqtt.IsConnected()
 
 	return map[string]any{
 		"running":     s.running,
@@ -305,39 +210,7 @@ func (s *AlarmServer) GetStatus() map[string]any {
 	}
 }
 
-func (s *AlarmServer) GetLog(limit int) []AlarmEvent {
-	s.mu.Lock()
-	logCopy := make([]AlarmEvent, len(s.log))
-	copy(logCopy, s.log)
-	s.mu.Unlock()
-
-	n := len(logCopy)
-	if limit > 0 && limit < n {
-		n = limit
-	}
-
-	result := make([]AlarmEvent, n)
-	copy(result, logCopy[len(logCopy)-n:])
-
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].Time.After(result[j].Time)
-	})
-
-	return result
-}
-
-func (s *AlarmServer) ClearLog() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.log = s.log[:0]
-}
-
-func (s *AlarmServer) LoadRecentEvents(days int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.loadRecentEvents(days)
-}
-
+// connectMQTT connects the MQTT client (if configured) with auto-reconnect.
 func (s *AlarmServer) connectMQTT() {
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(fmt.Sprintf("tcp://%s:%d", s.config.MQTTHost, s.config.MQTTPort))
@@ -349,59 +222,65 @@ func (s *AlarmServer) connectMQTT() {
 		opts.SetPassword(s.config.MQTTPass)
 	}
 
-	opts.SetOnConnectHandler(func(c mqtt.Client) {
+	opts.SetOnConnectHandler(func(mqtt.Client) {
 		log.Printf("MQTT connected to %s:%d", s.config.MQTTHost, s.config.MQTTPort)
 	})
-	opts.SetConnectionLostHandler(func(c mqtt.Client, err error) {
+	opts.SetConnectionLostHandler(func(_ mqtt.Client, err error) {
 		log.Printf("MQTT connection lost: %v", err)
 	})
 
-	s.mqtt = mqtt.NewClient(opts)
-	if token := s.mqtt.Connect(); token.Wait() && token.Error() != nil {
+	client := mqtt.NewClient(opts)
+	if token := client.Connect(); token.Wait() && token.Error() != nil {
 		log.Printf("MQTT connect error: %v", token.Error())
 	}
+
+	s.mu.Lock()
+	s.mqtt = client
+	s.mu.Unlock()
 }
 
+// PublishMQTT publishes an event to the shared and per-device topics.
 func (s *AlarmServer) PublishMQTT(event AlarmEvent) {
-	if s.mqtt == nil || !s.mqtt.IsConnected() {
+	s.mu.Lock()
+	client := s.mqtt
+	s.mu.Unlock()
+
+	if client == nil || !client.IsConnected() {
 		return
 	}
 
-	topic := "dvr-alarm-server"
-	serial := event.SerialID
+	const topic = "dvr-alarm-server"
+	data, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("Alarm marshal error: %v", err)
+		return
+	}
 
-	data, _ := json.Marshal(event)
+	client.Publish(topic+"/events", 0, false, data)
+	client.Publish(fmt.Sprintf("%s/devices/%s/events", topic, event.SerialID), 0, false, data)
 
-	s.mqtt.Publish(topic+"/events", 0, false, data)
-	s.mqtt.Publish(fmt.Sprintf("%s/devices/%s/events", topic, serial), 0, false, data)
-
-	if event.Camera != "" {
-		s.mqtt.Publish(fmt.Sprintf("%s/devices/%s/camera", topic, serial), 0, false, event.Camera)
+	fields := map[string]string{
+		"camera":  event.Camera,
+		"type":    event.Type,
+		"status":  event.Status,
+		"event":   event.Event,
+		"descrip": event.Descrip,
+		"address": event.Address,
 	}
-	if event.Type != "" {
-		s.mqtt.Publish(fmt.Sprintf("%s/devices/%s/type", topic, serial), 0, false, event.Type)
-	}
-	if event.Status != "" {
-		s.mqtt.Publish(fmt.Sprintf("%s/devices/%s/status", topic, serial), 0, false, event.Status)
-	}
-	if event.Event != "" {
-		s.mqtt.Publish(fmt.Sprintf("%s/devices/%s/event", topic, serial), 0, false, event.Event)
-	}
-	if event.Descrip != "" {
-		s.mqtt.Publish(fmt.Sprintf("%s/devices/%s/descrip", topic, serial), 0, false, event.Descrip)
-	}
-	if event.Address != "" {
-		s.mqtt.Publish(fmt.Sprintf("%s/devices/%s/address", topic, serial), 0, false, event.Address)
+	for name, value := range fields {
+		if value != "" {
+			client.Publish(fmt.Sprintf("%s/devices/%s/%s", topic, event.SerialID, name), 0, false, value)
+		}
 	}
 }
 
+// runCommand executes the configured alarm_command for "Start" events.
 func (s *AlarmServer) runCommand(event AlarmEvent) {
 	log.Printf("Running alarm command: %s", s.config.AlarmCommand)
-	cmd := exec.Command("sh", "-c", s.config.AlarmCommand)
-	out, err := cmd.CombinedOutput()
+	out, err := exec.Command("sh", "-c", s.config.AlarmCommand).CombinedOutput()
 	if err != nil {
 		log.Printf("Alarm command error: %v output: %s", err, string(out))
-	} else {
-		log.Printf("Alarm command output: %s", string(out))
+		return
 	}
+	log.Printf("Alarm command output: %s", string(out))
 }

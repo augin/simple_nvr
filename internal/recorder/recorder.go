@@ -3,8 +3,6 @@ package recorder
 import (
 	"fmt"
 	"log"
-	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,7 +35,11 @@ type Recorder struct {
 	epoch         int64
 	failCount     map[string]int
 	segfaultTotal int
-	stopHealth    chan struct{}
+	// stopHealth stops the health-check loop of the current cycle;
+	// healthOpen tells whether that channel is still open (closing an
+	// already closed channel panics, and Stop may race with a new Start).
+	stopHealth chan struct{}
+	healthOpen bool
 }
 
 func NewRecorder(cfg *config.NVRConfig) *Recorder {
@@ -50,6 +52,57 @@ func NewRecorder(cfg *config.NVRConfig) *Recorder {
 		stopHealth: make(chan struct{}),
 	}
 	return r
+}
+
+// beginCycleLocked prepares per-cycle state: marks recording active, bumps the
+// epoch (so stale timers and health checks become no-ops), resets the failure
+// counters and opens a fresh health-check stop channel.
+// The caller must hold r.mu.
+func (r *Recorder) beginCycleLocked() (int64, chan struct{}) {
+	r.active = true
+	r.epoch++
+	r.failCount = make(map[string]int)
+	r.closeHealthLocked()
+	r.stopHealth = make(chan struct{})
+	r.healthOpen = true
+	return r.epoch, r.stopHealth
+}
+
+// closeHealthLocked stops the health-check loop of the current cycle, if it
+// has not been stopped yet. The caller must hold r.mu.
+func (r *Recorder) closeHealthLocked() {
+	if r.healthOpen {
+		close(r.stopHealth)
+		r.healthOpen = false
+	}
+}
+
+// scheduleCycleEnd deactivates the recorder after the cycle duration,
+// unless a newer cycle has started in the meantime.
+func (r *Recorder) scheduleCycleEnd(myEpoch int64, dur int) {
+	go func() {
+		time.Sleep(time.Duration(dur) * time.Second)
+		r.mu.Lock()
+		if r.epoch == myEpoch {
+			r.active = false
+		}
+		r.mu.Unlock()
+	}()
+}
+
+// scheduleHealthCheck starts the health-check loop shortly after the cycle
+// begins, giving ffmpeg time to spawn first.
+func (r *Recorder) scheduleHealthCheck(myEpoch int64, stopCh chan struct{}) {
+	go func() {
+		time.Sleep(10 * time.Second)
+		r.mu.Lock()
+		if r.epoch != myEpoch {
+			r.mu.Unlock()
+			return
+		}
+		r.mu.Unlock()
+		r.healthCheckLoop(stopCh)
+	}()
 }
 
 func (r *Recorder) StartRecording(durations ...int) {
@@ -81,12 +134,7 @@ func (r *Recorder) startRecordingAt(scheduledTime time.Time, durations ...int) {
 	currentTime := now.Format("15-04")
 
 	r.mu.Lock()
-	r.active = true
-	r.epoch++
-	myEpoch := r.epoch
-	r.failCount = make(map[string]int)
-	close(r.stopHealth)
-	r.stopHealth = make(chan struct{})
+	myEpoch, stopCh := r.beginCycleLocked()
 	r.mu.Unlock()
 
 	delay := 0
@@ -96,28 +144,21 @@ func (r *Recorder) startRecordingAt(scheduledTime time.Time, durations ...int) {
 		delay += 250
 	}
 
-	go func() {
-		time.Sleep(time.Duration(dur) * time.Second)
-		r.mu.Lock()
-		if r.epoch == myEpoch {
-			r.active = false
-		}
-		r.mu.Unlock()
-	}()
-
-	go func() {
-		time.Sleep(10 * time.Second)
-		r.mu.Lock()
-		if r.epoch == myEpoch {
-			stopCh := r.stopHealth
-			r.mu.Unlock()
-			r.healthCheckLoop(stopCh)
-			return
-		}
-		r.mu.Unlock()
-	}()
+	r.scheduleCycleEnd(myEpoch, dur)
+	r.scheduleHealthCheck(myEpoch, stopCh)
 }
 
+// restartServiceFn restarts the systemd unit; replaced in tests.
+var restartServiceFn = func() error {
+	_, err := exec.Command("systemctl", "restart", "simple-nvr").CombinedOutput()
+	return err
+}
+
+// exitFn terminates the process after too many segfaults; replaced in tests.
+var exitFn = os.Exit
+
+// recordStream runs one recording cycle for a single stream and logs the
+// outcome (including the global segfault counter that triggers a restart).
 func (r *Recorder) recordStream(streamName, year, month, day, currentTime string, duration int, myEpoch int64) {
 	startTime := time.Now()
 	directory := filepath.Join(r.config.BaseDir, streamName, year, month, day)
@@ -141,10 +182,9 @@ func (r *Recorder) recordStream(streamName, year, month, day, currentTime string
 			log.Printf("Stream %s: segfault count %d/3 (global)", streamName, cnt)
 			if cnt >= 3 {
 				log.Printf("3+ consecutive segfaults detected, restarting service")
-				cmd := exec.Command("systemctl", "restart", "simple-nvr")
-				if _, err := cmd.CombinedOutput(); err != nil {
+				if err := restartServiceFn(); err != nil {
 					log.Printf("systemctl not available (%v), exiting for container restart", err)
-					os.Exit(1)
+					exitFn(1)
 				} else {
 					log.Printf("Service restart triggered")
 				}
@@ -211,6 +251,18 @@ func (r *Recorder) runFFmpeg(streamName, outputFile string, duration int, myEpoc
 	}
 	r.mu.Unlock()
 
+	// Cleanup in every exit path (success, failure, SIGKILL) so that stale
+	// entries never linger in the maps; the epoch guard keeps a slow run of an
+	// old cycle from deleting the state of a newer one.
+	defer func() {
+		r.mu.Lock()
+		if s, ok := r.streamInfo[streamName]; ok && s.Epoch == myEpoch {
+			delete(r.processes, streamName)
+			delete(r.streamInfo, streamName)
+		}
+		r.mu.Unlock()
+	}()
+
 	done := make(chan error, 1)
 	go func() {
 		done <- cmd.Wait()
@@ -245,13 +297,6 @@ func (r *Recorder) runFFmpeg(streamName, outputFile string, duration int, myEpoc
 			return fmt.Errorf("recording killed by SIGKILL after %ds", duration+35)
 		}
 	}
-
-	r.mu.Lock()
-	if s, ok := r.streamInfo[streamName]; ok && s.Epoch == myEpoch {
-		delete(r.processes, streamName)
-		delete(r.streamInfo, streamName)
-	}
-	r.mu.Unlock()
 
 	return err
 }
@@ -319,36 +364,13 @@ func (r *Recorder) StartRecordingStream(name string) {
 	currentTime := now.Format("15-04")
 
 	r.mu.Lock()
-	r.active = true
-	r.epoch++
-	myEpoch := r.epoch
-	r.failCount = make(map[string]int)
-	close(r.stopHealth)
-	r.stopHealth = make(chan struct{})
+	myEpoch, stopCh := r.beginCycleLocked()
 	r.mu.Unlock()
 
 	go r.recordStream(name, year, month, day, currentTime, dur, myEpoch)
 
-	go func() {
-		time.Sleep(time.Duration(dur) * time.Second)
-		r.mu.Lock()
-		if r.epoch == myEpoch {
-			r.active = false
-		}
-		r.mu.Unlock()
-	}()
-
-	go func() {
-		time.Sleep(10 * time.Second)
-		r.mu.Lock()
-		if r.epoch == myEpoch {
-			stopCh := r.stopHealth
-			r.mu.Unlock()
-			r.healthCheckLoop(stopCh)
-			return
-		}
-		r.mu.Unlock()
-	}()
+	r.scheduleCycleEnd(myEpoch, dur)
+	r.scheduleHealthCheck(myEpoch, stopCh)
 }
 
 func (r *Recorder) StopRecordingStream(name string) {
@@ -375,7 +397,7 @@ func (r *Recorder) StopRecording() {
 	r.processes = make(map[string]*exec.Cmd)
 	r.streamInfo = make(map[string]*StreamInfo)
 	r.active = false
-	close(r.stopHealth)
+	r.closeHealthLocked()
 	r.mu.Unlock()
 
 	log.Printf("Stopping %d recording processes...", len(cmds))
@@ -556,27 +578,4 @@ func (r *Recorder) restartStream(name string, currentEpoch int64) {
 
 	log.Printf("Health check: restarting recording for %s", name)
 	go r.recordStream(name, year, month, day, currentTime, r.duration, currentEpoch)
-}
-
-func (r *Recorder) go2rtcAPIBase() string {
-	if r.config.StreamServer != "" {
-		if u, err := url.Parse(r.config.StreamServer); err == nil && u.Hostname() != "" {
-			return "http://" + u.Hostname() + ":1984"
-		}
-	}
-	return "http://localhost:1984"
-}
-
-func (r *Recorder) restartGo2RTC() error {
-	apiBase := r.go2rtcAPIBase()
-	log.Printf("Restarting go2rtc via %s/api/restart", apiBase)
-	resp, err := http.Post(apiBase+"/api/restart", "", nil)
-	if err != nil {
-		return fmt.Errorf("go2rtc restart failed: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("go2rtc restart returned status %d", resp.StatusCode)
-	}
-	return nil
 }
