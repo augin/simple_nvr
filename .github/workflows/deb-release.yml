@@ -153,6 +153,11 @@ jobs:
         VERSION="${{ steps.version.outputs.version }}"
         DEB="${{ env.deb_file }}"
 
+        # apt-ftparchive ships in apt-utils, which newer runners no longer
+        # preinstall.
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq apt-utils
+
         git clone https://x-access-token:${{ secrets.APT_REPO_TOKEN }}@github.com/augin/augin.github.io.git /tmp/apt-repo
         cd /tmp/apt-repo
 
