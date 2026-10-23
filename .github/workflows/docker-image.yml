@@ -66,5 +66,11 @@ jobs:
         git config user.email "ci-bot@augin.ru"
         git config user.name "CI Bot"
         git add config.yaml
-        git commit -m "v${{ steps.version.outputs.VERSION }}: update NVR addon version"
-        git push origin main
+        # The version may already be current when a tag is re-pushed; a
+        # commit with no staged changes must not fail the job.
+        if git diff --cached --quiet; then
+          echo "config.yaml already at version ${{ steps.version.outputs.VERSION }}"
+        else
+          git commit -m "v${{ steps.version.outputs.VERSION }}: update NVR addon version"
+          git push origin main
+        fi
