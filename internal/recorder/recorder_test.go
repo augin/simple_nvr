@@ -203,6 +203,7 @@ func installStubs(t *testing.T, argsPath, mode string) {
 	write("timeout", `echo "$@" > "`+argsPath+`"
 case "$STUB_MODE" in
   segv) kill -SEGV $$ ;;
+  hang) exec sleep 30 ;;
   *) exit ${STUB_EXIT:-0} ;;
 esac`)
 	write("ionice", `exit 0`)
@@ -263,30 +264,26 @@ func TestRecordStreamSegfaultRestartsService(t *testing.T) {
 	installStubs(t, argsPath, "segv")
 
 	var mu sync.Mutex
-	restarts, exits := 0, 0
-	oldRestart, oldExit := restartServiceFn, exitFn
+	restarts := 0
+	oldRestart := restartServiceFn
 	restartServiceFn = func() error { mu.Lock(); restarts++; mu.Unlock(); return nil }
-	exitFn = func(int) { mu.Lock(); exits++; mu.Unlock() }
-	defer func() { restartServiceFn, exitFn = oldRestart, oldExit }()
+	defer func() { restartServiceFn = oldRestart }()
 
 	// Первые два segfault — только счётчик.
 	for i := 0; i < 2; i++ {
 		r.recordStream("cam1", "2026", "10", "21", "12-00-00", 5, 1)
 	}
 	mu.Lock()
-	if restarts != 0 || exits != 0 {
-		t.Errorf("after 2 segfaults: restarts=%d exits=%d", restarts, exits)
+	if restarts != 0 {
+		t.Errorf("after 2 segfaults: restarts=%d", restarts)
 	}
 	mu.Unlock()
 
-	// Третий — перезапуск сервиса (и без systemd — выход из процесса).
+	// Третий — перезапуск сервиса.
 	r.recordStream("cam1", "2026", "10", "21", "12-00-00", 5, 1)
 	mu.Lock()
 	if restarts != 1 {
 		t.Errorf("restarts = %d, want 1", restarts)
-	}
-	if exits != 0 {
-		t.Errorf("exits = %d, want 0 when systemctl works", exits)
 	}
 	mu.Unlock()
 
@@ -304,28 +301,30 @@ func TestRecordStreamSegfaultRestartsService(t *testing.T) {
 	}
 }
 
-func TestRecordStreamSegfaultExitsWithoutSystemd(t *testing.T) {
+func TestRecordStreamSegfaultWithoutSystemdDoesNotExit(t *testing.T) {
 	r := newTestRecorder(t)
 	argsPath := filepath.Join(t.TempDir(), "args")
 	installStubs(t, argsPath, "segv")
 
-	oldRestart, oldExit := restartServiceFn, exitFn
-	restartServiceFn = func() error { return errors.New("systemctl unavailable") }
-	exited := make(chan int, 1)
-	exitFn = func(code int) { exited <- code }
-	defer func() { restartServiceFn, exitFn = oldRestart, oldExit }()
+	var mu sync.Mutex
+	restarts := 0
+	oldRestart := restartServiceFn
+	restartServiceFn = func() error { mu.Lock(); restarts++; mu.Unlock(); return errors.New("systemctl unavailable") }
+	defer func() { restartServiceFn = oldRestart }()
 
+	// В контейнере (нет systemctl) три segfault'а пытаются перезапустить
+	// сервис, но не убивают процесс — иначе это был бы бесконечный
+	// crash-loop через restart: always.
 	for i := 0; i < 3; i++ {
 		r.recordStream("cam1", "2026", "10", "21", "12-00-00", 5, 1)
 	}
-	select {
-	case code := <-exited:
-		if code != 1 {
-			t.Errorf("exit code = %d, want 1", code)
-		}
-	default:
-		t.Error("expected exitFn to be called when systemctl is unavailable")
+
+	mu.Lock()
+	defer mu.Unlock()
+	if restarts == 0 {
+		t.Error("expected a service-restart attempt on the 3rd segfault")
 	}
+	// Достижение этой строки означает, что процесс не был убит (exit).
 }
 
 func TestRecordStreamCreatesOutputDir(t *testing.T) {
@@ -353,5 +352,104 @@ func TestRecordStreamMissingFFmpeg(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	if err := r.runFFmpeg("cam1", "out.mp4", 5, 1); err == nil {
 		t.Fatal("expected error when ffmpeg tooling is missing")
+	}
+}
+
+// --- утечка при health-check рестарте ---------------------------------------
+
+// Рестарт health-check'ом идёт с тем же epoch, что и убитый процесс. Поэтому
+// cleanup убитого рана обязан смотреть на идентичность cmd, а не на epoch —
+// иначе он стирает запись своего преемника, и тот остаётся живым, но
+// невидимым для health-check (осиротевший ffmpeg).
+func TestCleanupStreamDoesNotDeleteSuccessor(t *testing.T) {
+	r := newTestRecorder(t)
+
+	oldCmd := exec.Command("sleep", "30")
+	newCmd := exec.Command("sleep", "30")
+
+	// Преемник уже перезаписал запись старого рана (тот же epoch).
+	r.mu.Lock()
+	r.processes["cam1"] = newCmd
+	r.streamInfo["cam1"] = &StreamInfo{Name: "cam1", Output: "/tmp/a.mp4", Healthy: true, Epoch: 1}
+	r.mu.Unlock()
+
+	// Стартовавший ранее ран завершается и чистит за собой.
+	r.cleanupStream("cam1", oldCmd)
+
+	r.mu.Lock()
+	_, procOK := r.processes["cam1"]
+	_, infoOK := r.streamInfo["cam1"]
+	r.mu.Unlock()
+
+	if !procOK || !infoOK {
+		t.Error("cleanup of a replaced run must not delete its successor's bookkeeping")
+	}
+}
+
+// При обычном завершении запись принадлежит этому же cmd — её нужно убрать.
+func TestCleanupStreamRemovesOwnEntry(t *testing.T) {
+	r := newTestRecorder(t)
+	cmd := exec.Command("sleep", "30")
+
+	r.mu.Lock()
+	r.processes["cam1"] = cmd
+	r.streamInfo["cam1"] = &StreamInfo{Name: "cam1", Epoch: 1}
+	r.mu.Unlock()
+
+	r.cleanupStream("cam1", cmd)
+
+	r.mu.Lock()
+	_, procOK := r.processes["cam1"]
+	_, infoOK := r.streamInfo["cam1"]
+	r.mu.Unlock()
+	if procOK || infoOK {
+		t.Error("cleanup of the owning run should remove its entry")
+	}
+}
+
+// --- гонка на cmd.Wait -------------------------------------------------------
+
+// Регрессия: StopRecordingStream во время активного recordStream раньше зовул
+// cmd.Wait() и в GracefulStop, и в recordStream — data race на одном *exec.Cmd
+// (ловился -race). Теперь Wait принадлежит только recordStream, а GracefulStop
+// наблюдает смерть через /proc.
+func TestStopWhileRecordingNoWaitRace(t *testing.T) {
+	r := newTestRecorder(t)
+	argsPath := filepath.Join(t.TempDir(), "args")
+	installStubs(t, argsPath, "hang")
+
+	r.mu.Lock()
+	epoch, _ := r.beginCycleLocked()
+	r.mu.Unlock()
+
+	go r.recordStream("cam1", "2026", "10", "21", "12-00-00", 60, epoch)
+
+	// Ждём, пока поток зарегистрируется.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		r.mu.Lock()
+		_, ok := r.processes["cam1"]
+		r.mu.Unlock()
+		if ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("stream never registered")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// Останавливаем поток, пока recordStream ждёт его завершения.
+	r.StopRecordingStream("cam1")
+
+	// Даём recordStream корректно завершиться и снять bookkeeping.
+	time.Sleep(500 * time.Millisecond)
+
+	r.mu.Lock()
+	_, stillTracked := r.processes["cam1"]
+	_, stillInfo := r.streamInfo["cam1"]
+	r.mu.Unlock()
+	if stillTracked || stillInfo {
+		t.Error("stopped stream should be removed from tracking")
 	}
 }

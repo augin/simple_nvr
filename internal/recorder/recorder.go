@@ -154,9 +154,6 @@ var restartServiceFn = func() error {
 	return err
 }
 
-// exitFn terminates the process after too many segfaults; replaced in tests.
-var exitFn = os.Exit
-
 // recordStream runs one recording cycle for a single stream and logs the
 // outcome (including the global segfault counter that triggers a restart).
 func (r *Recorder) recordStream(streamName, year, month, day, currentTime string, duration int, myEpoch int64) {
@@ -181,10 +178,13 @@ func (r *Recorder) recordStream(streamName, year, month, day, currentTime string
 			r.mu.Unlock()
 			log.Printf("Stream %s: segfault count %d/3 (global)", streamName, cnt)
 			if cnt >= 3 {
-				log.Printf("3+ consecutive segfaults detected, restarting service")
+				log.Printf("WARNING: %d ffmpeg segfaults with no successful recording in between — likely a broken ffmpeg build or exhausted resources", cnt)
 				if err := restartServiceFn(); err != nil {
-					log.Printf("systemctl not available (%v), exiting for container restart", err)
-					exitFn(1)
+					// No systemd (e.g. a container with restart: always):
+					// exiting here would only trigger a restart loop without
+					// fixing ffmpeg. Keep running; the health check retries
+					// the failed streams.
+					log.Printf("Service restart unavailable (%v); continuing — health check will retry streams", err)
 				} else {
 					log.Printf("Service restart triggered")
 				}
@@ -252,16 +252,11 @@ func (r *Recorder) runFFmpeg(streamName, outputFile string, duration int, myEpoc
 	r.mu.Unlock()
 
 	// Cleanup in every exit path (success, failure, SIGKILL) so that stale
-	// entries never linger in the maps; the epoch guard keeps a slow run of an
-	// old cycle from deleting the state of a newer one.
-	defer func() {
-		r.mu.Lock()
-		if s, ok := r.streamInfo[streamName]; ok && s.Epoch == myEpoch {
-			delete(r.processes, streamName)
-			delete(r.streamInfo, streamName)
-		}
-		r.mu.Unlock()
-	}()
+	// entries never linger in the maps. The guard is the cmd identity, not the
+	// epoch: a health-check restart reuses the same epoch, so an epoch check
+	// would let this run delete the bookkeeping of the process that replaced
+	// it — orphaning a live ffmpeg that keeps recording untracked.
+	defer r.cleanupStream(streamName, cmd)
 
 	done := make(chan error, 1)
 	go func() {
@@ -301,6 +296,56 @@ func (r *Recorder) runFFmpeg(streamName, outputFile string, duration int, myEpoc
 	return err
 }
 
+// cleanupStream drops this run's bookkeeping for streamName, but only while
+// the maps still point at this run's cmd. A health-check restart replaces the
+// entry with a fresh cmd under the same epoch; the replaced run must leave the
+// successor's entry alone, or the live successor is orphaned and the health
+// check keeps spawning replacements forever.
+func (r *Recorder) cleanupStream(streamName string, cmd *exec.Cmd) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.processes[streamName] == cmd {
+		delete(r.processes, streamName)
+		delete(r.streamInfo, streamName)
+	}
+}
+
+// processRunning reports whether pid is still executing. A zombie (exited but
+// not yet reaped) counts as not running: the process itself has terminated and
+// the reaper (runFFmpeg's single Wait) will collect it.
+func processRunning(pid int) bool {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return false // no such process, or already reaped
+	}
+	// /proc/<pid>/stat is "pid (comm) state ..."; comm may contain spaces and
+	// parentheses, so parse the state after the final ") ".
+	s := string(data)
+	i := strings.LastIndex(s, ") ")
+	if i < 0 || i+2 >= len(s) {
+		return true // unparseable: err on the side of "still alive"
+	}
+	return s[i+2] != 'Z'
+}
+
+// waitForDeath polls until pid terminates or the timeout elapses, reporting
+// whether it died in time.
+func waitForDeath(pid int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for processRunning(pid) {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	return true
+}
+
+// GracefulStop asks the process group to terminate, escalating SIGTERM →
+// SIGKILL, and waits for the processes to die. It deliberately does NOT call
+// cmd.Wait(): the goroutine that started the process (runFFmpeg) owns the
+// single Wait, and a second concurrent Wait on the same *exec.Cmd is a data
+// race. Death is observed through /proc instead.
 func GracefulStop(cmd *exec.Cmd, grace time.Duration) {
 	if cmd.Process == nil {
 		return
@@ -308,49 +353,27 @@ func GracefulStop(cmd *exec.Cmd, grace time.Duration) {
 	pid := cmd.Process.Pid
 	pgid := -pid
 
-	if err := syscall.Kill(pid, 0); err != nil {
-		log.Printf("[stop] PID %d already dead: %v", pid, err)
+	if !processRunning(pid) {
+		log.Printf("[stop] PID %d already dead", pid)
 		return
 	}
 
-	if state, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid)); err == nil {
-		for _, line := range strings.Split(string(state), "\n") {
-			if strings.HasPrefix(line, "State:") {
-				log.Printf("[stop] PID %d state: %s", pid, strings.TrimSpace(line))
-				break
-			}
-		}
+	log.Printf("[stop] Sending SIGTERM to pgid %d (PID %d)", pgid, pid)
+	if err := syscall.Kill(pgid, syscall.SIGTERM); err != nil {
+		log.Printf("[stop] SIGTERM result: %v", err)
 	}
 
-	log.Printf("[stop] Sending SIGTERM to pgid %d (PID %d)", pgid, pid)
-	err := syscall.Kill(pgid, syscall.SIGTERM)
-	log.Printf("[stop] SIGTERM result: %v", err)
-
-	timer := time.NewTimer(grace)
-	defer timer.Stop()
-
-	exited := make(chan struct{})
-	go func() {
-		_ = cmd.Wait()
-		close(exited)
-	}()
-
-	select {
-	case <-exited:
+	if waitForDeath(pid, grace) {
 		log.Printf("[stop] PID %d exited gracefully after SIGTERM", pid)
-	case <-timer.C:
-		if state, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid)); err == nil {
-			for _, line := range strings.Split(string(state), "\n") {
-				if strings.HasPrefix(line, "State:") {
-					log.Printf("[stop] PID %d still alive after %v, state: %s", pid, grace, strings.TrimSpace(line))
-					break
-				}
-			}
-		}
-		log.Printf("[stop] Sending SIGKILL to pgid %d", pgid)
-		_ = syscall.Kill(pgid, syscall.SIGKILL)
-		<-exited
+		return
+	}
+
+	log.Printf("[stop] PID %d still alive after %v, sending SIGKILL", pid, grace)
+	_ = syscall.Kill(pgid, syscall.SIGKILL)
+	if waitForDeath(pid, 10*time.Second) {
 		log.Printf("[stop] PID %d killed by SIGKILL", pid)
+	} else {
+		log.Printf("[stop] PID %d did not die after SIGKILL", pid)
 	}
 }
 
